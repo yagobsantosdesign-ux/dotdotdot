@@ -1,0 +1,16 @@
+{
+  "name": "figma-dot-matrix",
+  "version": "1.0.0",
+  "description": "Figma plugin that turns an image into an editable dot-matrix / pill-halftone graphic.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.js",
+    "watch": "node build.js --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.2",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}
