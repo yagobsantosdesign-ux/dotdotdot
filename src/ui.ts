@@ -19,6 +19,8 @@ type Params = {
   dissolve: number; // 0..100: how strongly cells scatter toward the dissolving edge
   reach: number; // 0..100: how far the dissolve gradient reaches into the figure
   dissolveDir: DissolveDir;
+  dither: boolean; // "Print" mode: 1-bit Floyd–Steinberg dithering instead of threshold
+  contrast: number; // 0..100: contrast applied before dithering
 };
 
 // --- state ---
@@ -35,6 +37,7 @@ type RandomStyle = "cloud" | "burst" | "dust" | "mirror";
 let randomStyle: RandomStyle = "cloud";
 let randomSeed = 1;
 let dissolveDir: DissolveDir = "top";
+let imgStyle: "dots" | "print" = "dots"; // "print" = high-contrast dithered (1-bit) look
 const STYLE_FILL: Record<RandomStyle, number> = { cloud: 145, burst: 155, dust: 100, mirror: 145 };
 let lastShapes: Shape[] = [];
 let lastCanvas = { w: 0, h: 0 };
@@ -63,10 +66,10 @@ let statusState: StatusState = { kind: "idle" };
 const STR = {
   en: {
     density: "Density", dotSize: "Dot size", dotWidth: "Dot width", spacing: "Spacing",
-    corners: "Corners", dissolve: "Dissolve", reach: "Reach",
+    corners: "Corners", dissolve: "Dissolve", reach: "Reach", contrast: "Contrast",
     fill: "Fill", threshold: "Threshold", invert: "Invert", generate: "Generate", close: "Close",
     cloud: "Cloud", burst: "Explosion", dust: "Dust", mirror: "Symmetric",
-    modeImage: "Image", modeRandom: "Random",
+    modeDots: "Dots", modePrint: "Print", modeRandom: "Random",
     idle: "Select an image, or tap the smiley 🙂", imgWord: "Image",
     silhouette: "silhouette mode", luminance: "luminance mode", randomWord: "Random",
     decodeErr: "Couldn't decode the image.", shapes: "shapes", output: "output",
@@ -79,10 +82,10 @@ const STR = {
   },
   pt: {
     density: "Densidade", dotSize: "Tamanho do dot", dotWidth: "Largura do dot", spacing: "Espaçamento",
-    corners: "Cantos", dissolve: "Dissolver", reach: "Alcance",
+    corners: "Cantos", dissolve: "Dissolver", reach: "Alcance", contrast: "Contraste",
     fill: "Preenchimento", threshold: "Threshold", invert: "Inverter", generate: "Gerar", close: "Fechar",
     cloud: "Nuvem", burst: "Explosão", dust: "Poeira", mirror: "Simétrico",
-    modeImage: "Imagem", modeRandom: "Aleatório",
+    modeDots: "Pontos", modePrint: "Print", modeRandom: "Aleatório",
     idle: "Selecione uma imagem, ou clique na carinha 🙂", imgWord: "Imagem",
     silhouette: "modo silhueta", luminance: "modo luminância", randomWord: "Aleatório",
     decodeErr: "Não foi possível decodificar a imagem.", shapes: "formas", output: "saída",
@@ -123,8 +126,10 @@ function applyLang() {
   q('#rstyle .seg[data-style="burst"]').textContent = t("burst");
   q('#rstyle .seg[data-style="dust"]').textContent = t("dust");
   q('#rstyle .seg[data-style="mirror"]').textContent = t("mirror");
-  q('#modebar .seg[data-mode="image"]').textContent = t("modeImage");
+  q('#modebar .seg[data-mode="dots"]').textContent = t("modeDots");
+  q('#modebar .seg[data-mode="print"]').textContent = t("modePrint");
   q('#modebar .seg[data-mode="random"]').textContent = t("modeRandom");
+  q("#s-contrast .slabel span").textContent = t("contrast");
   lblThreshold.textContent = mode === "random" ? t("fill") : t("threshold");
   $("smiley").title = t("reroll");
   $("expand").title = expanded ? t("collapse") : t("expand");
@@ -220,6 +225,8 @@ function readParams(): Params {
     dissolve: sliders["s-dissolve"].value,
     reach: sliders["s-reach"].value,
     dissolveDir,
+    dither: mode === "image" && imgStyle === "print",
+    contrast: sliders["s-contrast"].value,
   };
 }
 function setThreshold(v: number) {
@@ -281,6 +288,30 @@ function previewAspect(): number {
 function smoothstep(a: number, b: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
+}
+
+// Floyd–Steinberg dithering -> 1-bit grid (0 or 255), for the "Print" high-contrast look.
+function ditherGrid(src: Uint8ClampedArray, cols: number, rows: number, threshold: number, contrast: number): Uint8ClampedArray {
+  const cf = 1 + (contrast / 100) * 2; // contrast factor 1..3
+  const buf = new Float32Array(cols * rows);
+  for (let i = 0; i < buf.length; i++) buf[i] = (src[i] - 128) * cf + 128;
+  const out = new Uint8ClampedArray(cols * rows);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const i = y * cols + x;
+      const old = buf[i];
+      const nw = old < threshold ? 0 : 255;
+      out[i] = nw;
+      const err = old - nw;
+      if (x + 1 < cols) buf[i + 1] += (err * 7) / 16;
+      if (y + 1 < rows) {
+        if (x > 0) buf[i + cols - 1] += (err * 3) / 16;
+        buf[i + cols] += (err * 5) / 16;
+        if (x + 1 < cols) buf[i + cols + 1] += (err * 1) / 16;
+      }
+    }
+  }
+  return out;
 }
 
 // Stable per-cell pseudo-random in [0,1), used to scatter cells for the dissolve effect.
@@ -436,10 +467,14 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
   const pitch = p.dotSize + p.gap; // square grid — the mark width never affects the canvas
   const dissolveN = p.dissolve / 100;
   const dStart = Math.min(0.98, 1 - p.reach / 100); // where the dissolve gradient begins
+  const dith = p.dither ? ditherGrid(lum, gridCols, gridRows, p.threshold, p.contrast) : null;
   const isOn = (r: number, c: number) => {
     const idx = r * gridCols + c;
     let base: boolean;
-    if (maskMode === "alpha") {
+    if (dith) {
+      if (alphaArr![idx] < ALPHA_CUTOFF) return false;
+      base = dith[idx] >= 128; // white pixels of the dithered image
+    } else if (maskMode === "alpha") {
       base = alphaArr![idx] >= p.threshold;
     } else {
       if (alphaArr![idx] < ALPHA_CUTOFF) return false;
@@ -582,6 +617,26 @@ initSlider("s-dot", scheduleRecompute, false);
 initSlider("s-gap", scheduleRecompute, false);
 initSlider("s-round", scheduleRecompute, false);
 initSlider("s-reach", scheduleRecompute, false);
+initSlider("s-contrast", scheduleRecompute, false);
+
+function setSliderVal(id: string, v: number) {
+  const s = sliders[id];
+  s.value = v;
+  const el = $(id);
+  const t2 = (v - s.min) / (s.max - s.min);
+  (el.querySelector(".fill") as HTMLElement).style.width = `${t2 * 100}%`;
+  (el.querySelector(".thumb") as HTMLElement).style.left = `${t2 * 100}%`;
+  (el.querySelector(".sval") as HTMLElement).textContent = String(v);
+}
+function applyPrintDefaults() {
+  setSliderVal("s-density", 150);
+  setSliderVal("s-dot", 4);
+  setSliderVal("s-gap", 0);
+  setSliderVal("s-round", 0);
+  setSliderVal("s-contrast", 40);
+  setSliderVal("s-threshold", 128);
+  setInvert(false);
+}
 function updateDissolveUI() {
   $("dissolve-extra").classList.toggle("is-hidden", sliders["s-dissolve"].value === 0);
 }
@@ -612,16 +667,21 @@ function applyStyleUI() {
 }
 
 function applyModeUI() {
+  const active = mode === "random" ? "random" : imgStyle; // "dots" | "print" | "random"
   document.querySelectorAll<HTMLElement>("#modebar .seg").forEach((b) => {
-    b.classList.toggle("on", b.dataset.mode === mode);
+    b.classList.toggle("on", b.dataset.mode === active);
   });
 }
 
-// Switch to image mode and (re)load whatever image is selected in Figma.
-function enterImage() {
+// Switch to image mode with a given style, and (re)load the selected Figma image.
+function enterImage(style: "dots" | "print") {
+  const wasPrint = mode === "image" && imgStyle === "print";
   mode = "image";
+  imgStyle = style;
   rndbar.classList.add("hidden");
   $("s-width").classList.add("is-hidden");
+  $("s-contrast").classList.toggle("is-hidden", style !== "print");
+  if (style === "print" && !wasPrint) applyPrintDefaults();
   applyModeUI();
   lblThreshold.textContent = t("threshold");
   parent.postMessage({ pluginMessage: { type: "request-image" } }, "*");
@@ -632,6 +692,7 @@ function showRandom(newSeed: boolean, resetFill: boolean) {
   mode = "random";
   rndbar.classList.remove("hidden");
   $("s-width").classList.remove("is-hidden");
+  $("s-contrast").classList.add("is-hidden");
   applyModeUI();
   lblThreshold.textContent = t("fill");
   if (resetFill || !wasRandom) {
@@ -649,8 +710,9 @@ $("smiley").addEventListener("click", () => showRandom(true, false));
 
 document.querySelectorAll<HTMLElement>("#modebar .seg").forEach((btn) => {
   btn.addEventListener("click", () => {
-    if (btn.dataset.mode === "image") enterImage();
-    else showRandom(false, false); // switch to random, keep the current figure
+    const m = btn.dataset.mode;
+    if (m === "random") showRandom(false, false); // keep the current figure
+    else enterImage(m === "print" ? "print" : "dots");
   });
 });
 

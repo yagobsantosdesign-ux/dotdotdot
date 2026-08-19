@@ -39,7 +39,8 @@
 
     <div class="panel">
       <div class="segmented modebar" id="modebar">
-        <button class="seg on" data-mode="image">Image</button>
+        <button class="seg on" data-mode="dots">Dots</button>
+        <button class="seg" data-mode="print">Print</button>
         <button class="seg" data-mode="random">Random</button>
       </div>
 
@@ -67,6 +68,10 @@
     </div>
     <div class="slider random-only is-hidden" id="s-width" data-min="0" data-max="100" data-value="100">
       <div class="slabel"><span>Largura do dot</span><b class="sval">100</b></div>
+      <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+    </div>
+    <div class="slider print-only is-hidden" id="s-contrast" data-min="0" data-max="100" data-value="40">
+      <div class="slabel"><span>Contraste</span><b class="sval">40</b></div>
       <div class="track"><div class="fill"></div><div class="thumb"></div></div>
     </div>
     <div class="slider" id="s-gap" data-min="0" data-max="20" data-value="2">

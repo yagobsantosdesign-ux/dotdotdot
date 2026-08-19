@@ -39,7 +39,8 @@
 
     <div class="panel">
       <div class="segmented modebar" id="modebar">
-        <button class="seg on" data-mode="image">Image</button>
+        <button class="seg on" data-mode="dots">Dots</button>
+        <button class="seg" data-mode="print">Print</button>
         <button class="seg" data-mode="random">Random</button>
       </div>
 
@@ -67,6 +68,10 @@
     </div>
     <div class="slider random-only is-hidden" id="s-width" data-min="0" data-max="100" data-value="100">
       <div class="slabel"><span>Largura do dot</span><b class="sval">100</b></div>
+      <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+    </div>
+    <div class="slider print-only is-hidden" id="s-contrast" data-min="0" data-max="100" data-value="40">
+      <div class="slabel"><span>Contraste</span><b class="sval">40</b></div>
       <div class="track"><div class="fill"></div><div class="thumb"></div></div>
     </div>
     <div class="slider" id="s-gap" data-min="0" data-max="20" data-value="2">
@@ -331,6 +336,7 @@
   var randomStyle = "cloud";
   var randomSeed = 1;
   var dissolveDir = "top";
+  var imgStyle = "dots";
   var STYLE_FILL = { cloud: 145, burst: 155, dust: 100, mirror: 145 };
   var lastShapes = [];
   var lastCanvas = { w: 0, h: 0 };
@@ -354,6 +360,7 @@
       corners: "Corners",
       dissolve: "Dissolve",
       reach: "Reach",
+      contrast: "Contrast",
       fill: "Fill",
       threshold: "Threshold",
       invert: "Invert",
@@ -363,7 +370,8 @@
       burst: "Explosion",
       dust: "Dust",
       mirror: "Symmetric",
-      modeImage: "Image",
+      modeDots: "Dots",
+      modePrint: "Print",
       modeRandom: "Random",
       idle: "Select an image, or tap the smiley \u{1F642}",
       imgWord: "Image",
@@ -394,6 +402,7 @@
       corners: "Cantos",
       dissolve: "Dissolver",
       reach: "Alcance",
+      contrast: "Contraste",
       fill: "Preenchimento",
       threshold: "Threshold",
       invert: "Inverter",
@@ -403,7 +412,8 @@
       burst: "Explos\xE3o",
       dust: "Poeira",
       mirror: "Sim\xE9trico",
-      modeImage: "Imagem",
+      modeDots: "Pontos",
+      modePrint: "Print",
       modeRandom: "Aleat\xF3rio",
       idle: "Selecione uma imagem, ou clique na carinha \u{1F642}",
       imgWord: "Imagem",
@@ -454,8 +464,10 @@
     q('#rstyle .seg[data-style="burst"]').textContent = t("burst");
     q('#rstyle .seg[data-style="dust"]').textContent = t("dust");
     q('#rstyle .seg[data-style="mirror"]').textContent = t("mirror");
-    q('#modebar .seg[data-mode="image"]').textContent = t("modeImage");
+    q('#modebar .seg[data-mode="dots"]').textContent = t("modeDots");
+    q('#modebar .seg[data-mode="print"]').textContent = t("modePrint");
     q('#modebar .seg[data-mode="random"]').textContent = t("modeRandom");
+    q("#s-contrast .slabel span").textContent = t("contrast");
     lblThreshold.textContent = mode === "random" ? t("fill") : t("threshold");
     $("smiley").title = t("reroll");
     $("expand").title = expanded ? t("collapse") : t("expand");
@@ -540,7 +552,9 @@
       roundness: sliders["s-round"].value,
       dissolve: sliders["s-dissolve"].value,
       reach: sliders["s-reach"].value,
-      dissolveDir
+      dissolveDir,
+      dither: mode === "image" && imgStyle === "print",
+      contrast: sliders["s-contrast"].value
     };
   }
   function setThreshold(v) {
@@ -595,6 +609,28 @@
   function smoothstep(a, b, x) {
     const t2 = Math.min(1, Math.max(0, (x - a) / (b - a)));
     return t2 * t2 * (3 - 2 * t2);
+  }
+  function ditherGrid(src, cols, rows, threshold, contrast) {
+    const cf = 1 + contrast / 100 * 2;
+    const buf = new Float32Array(cols * rows);
+    for (let i = 0; i < buf.length; i++) buf[i] = (src[i] - 128) * cf + 128;
+    const out = new Uint8ClampedArray(cols * rows);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const i = y * cols + x;
+        const old = buf[i];
+        const nw = old < threshold ? 0 : 255;
+        out[i] = nw;
+        const err = old - nw;
+        if (x + 1 < cols) buf[i + 1] += err * 7 / 16;
+        if (y + 1 < rows) {
+          if (x > 0) buf[i + cols - 1] += err * 3 / 16;
+          buf[i + cols] += err * 5 / 16;
+          if (x + 1 < cols) buf[i + cols + 1] += err * 1 / 16;
+        }
+      }
+    }
+    return out;
   }
   function hash2(c, r, seed) {
     let h = Math.imul(c, 374761393) + Math.imul(r, 668265263) + Math.imul(seed, 2147483647) >>> 0;
@@ -731,10 +767,14 @@
     const pitch = p.dotSize + p.gap;
     const dissolveN = p.dissolve / 100;
     const dStart = Math.min(0.98, 1 - p.reach / 100);
+    const dith = p.dither ? ditherGrid(lum, gridCols, gridRows, p.threshold, p.contrast) : null;
     const isOn = (r, c) => {
       const idx = r * gridCols + c;
       let base;
-      if (maskMode === "alpha") {
+      if (dith) {
+        if (alphaArr[idx] < ALPHA_CUTOFF) return false;
+        base = dith[idx] >= 128;
+      } else if (maskMode === "alpha") {
         base = alphaArr[idx] >= p.threshold;
       } else {
         if (alphaArr[idx] < ALPHA_CUTOFF) return false;
@@ -855,6 +895,25 @@
   initSlider("s-gap", scheduleRecompute, false);
   initSlider("s-round", scheduleRecompute, false);
   initSlider("s-reach", scheduleRecompute, false);
+  initSlider("s-contrast", scheduleRecompute, false);
+  function setSliderVal(id, v) {
+    const s = sliders[id];
+    s.value = v;
+    const el = $(id);
+    const t2 = (v - s.min) / (s.max - s.min);
+    el.querySelector(".fill").style.width = `${t2 * 100}%`;
+    el.querySelector(".thumb").style.left = `${t2 * 100}%`;
+    el.querySelector(".sval").textContent = String(v);
+  }
+  function applyPrintDefaults() {
+    setSliderVal("s-density", 150);
+    setSliderVal("s-dot", 4);
+    setSliderVal("s-gap", 0);
+    setSliderVal("s-round", 0);
+    setSliderVal("s-contrast", 40);
+    setSliderVal("s-threshold", 128);
+    setInvert(false);
+  }
   function updateDissolveUI() {
     $("dissolve-extra").classList.toggle("is-hidden", sliders["s-dissolve"].value === 0);
   }
@@ -880,14 +939,19 @@
     });
   }
   function applyModeUI() {
+    const active = mode === "random" ? "random" : imgStyle;
     document.querySelectorAll("#modebar .seg").forEach((b) => {
-      b.classList.toggle("on", b.dataset.mode === mode);
+      b.classList.toggle("on", b.dataset.mode === active);
     });
   }
-  function enterImage() {
+  function enterImage(style) {
+    const wasPrint = mode === "image" && imgStyle === "print";
     mode = "image";
+    imgStyle = style;
     rndbar.classList.add("hidden");
     $("s-width").classList.add("is-hidden");
+    $("s-contrast").classList.toggle("is-hidden", style !== "print");
+    if (style === "print" && !wasPrint) applyPrintDefaults();
     applyModeUI();
     lblThreshold.textContent = t("threshold");
     parent.postMessage({ pluginMessage: { type: "request-image" } }, "*");
@@ -897,6 +961,7 @@
     mode = "random";
     rndbar.classList.remove("hidden");
     $("s-width").classList.remove("is-hidden");
+    $("s-contrast").classList.add("is-hidden");
     applyModeUI();
     lblThreshold.textContent = t("fill");
     if (resetFill || !wasRandom) {
@@ -912,8 +977,9 @@
   $("smiley").addEventListener("click", () => showRandom(true, false));
   document.querySelectorAll("#modebar .seg").forEach((btn) => {
     btn.addEventListener("click", () => {
-      if (btn.dataset.mode === "image") enterImage();
-      else showRandom(false, false);
+      const m = btn.dataset.mode;
+      if (m === "random") showRandom(false, false);
+      else enterImage(m === "print" ? "print" : "dots");
     });
   });
   document.querySelectorAll("#rstyle .seg").forEach((btn) => {
