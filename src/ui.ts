@@ -529,13 +529,30 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
         const dn = isOn(r + 1, c);
         const lf = isOn(r, c - 1);
         const rt = isOn(r, c + 1);
+        // Diagonal neighbours (used both to keep the corner square and to weld across).
+        const dBR = isOn(r + 1, c + 1);
+        const dBL = isOn(r + 1, c - 1);
         // Round a corner only if it is truly exposed — keep it square when a diagonal
         // neighbour sits at that corner, so diagonally-touching cells connect.
         const tl = !up && !lf && !isOn(r - 1, c - 1) ? cornerR : 0;
         const tr = !up && !rt && !isOn(r - 1, c + 1) ? cornerR : 0;
-        const br = !dn && !rt && !isOn(r + 1, c + 1) ? cornerR : 0;
-        const bl = !dn && !lf && !isOn(r + 1, c - 1) ? cornerR : 0;
+        const br = !dn && !rt && !dBR ? cornerR : 0;
+        const bl = !dn && !lf && !dBL ? cornerR : 0;
         shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
+
+        // Weld diagonally-connected cells: a rounded blob at the shared corner whose size
+        // grows with the corner radius, so higher "Cantos" merges them more (added once
+        // per junction, from the top cell of each diagonal pair via its bottom corners).
+        const weld = pitch * roundN * 0.6;
+        if (weld > 0.5) {
+          const wr = (weld / 2) * roundN;
+          if (!dn && !rt && dBR) {
+            shapes.push({ kind: "dot", x: (c + 1) * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+          }
+          if (!dn && !lf && dBL) {
+            shapes.push({ kind: "dot", x: c * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+          }
+        }
       }
     }
     canvasW = Math.max(1, gridCols * pitch);

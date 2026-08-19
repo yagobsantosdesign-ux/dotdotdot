@@ -826,11 +826,23 @@
           const dn = isOn(r + 1, c);
           const lf = isOn(r, c - 1);
           const rt = isOn(r, c + 1);
+          const dBR = isOn(r + 1, c + 1);
+          const dBL = isOn(r + 1, c - 1);
           const tl = !up && !lf && !isOn(r - 1, c - 1) ? cornerR : 0;
           const tr = !up && !rt && !isOn(r - 1, c + 1) ? cornerR : 0;
-          const br = !dn && !rt && !isOn(r + 1, c + 1) ? cornerR : 0;
-          const bl = !dn && !lf && !isOn(r + 1, c - 1) ? cornerR : 0;
+          const br = !dn && !rt && !dBR ? cornerR : 0;
+          const bl = !dn && !lf && !dBL ? cornerR : 0;
           shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
+          const weld = pitch * roundN * 0.6;
+          if (weld > 0.5) {
+            const wr = weld / 2 * roundN;
+            if (!dn && !rt && dBR) {
+              shapes.push({ kind: "dot", x: (c + 1) * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+            }
+            if (!dn && !lf && dBL) {
+              shapes.push({ kind: "dot", x: c * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+            }
+          }
         }
       }
       canvasW = Math.max(1, gridCols * pitch);
