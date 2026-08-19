@@ -529,10 +529,12 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
         const dn = isOn(r + 1, c);
         const lf = isOn(r, c - 1);
         const rt = isOn(r, c + 1);
-        const tl = !up && !lf ? cornerR : 0;
-        const tr = !up && !rt ? cornerR : 0;
-        const br = !dn && !rt ? cornerR : 0;
-        const bl = !dn && !lf ? cornerR : 0;
+        // Round a corner only if it is truly exposed — keep it square when a diagonal
+        // neighbour sits at that corner, so diagonally-touching cells connect.
+        const tl = !up && !lf && !isOn(r - 1, c - 1) ? cornerR : 0;
+        const tr = !up && !rt && !isOn(r - 1, c + 1) ? cornerR : 0;
+        const br = !dn && !rt && !isOn(r + 1, c + 1) ? cornerR : 0;
+        const bl = !dn && !lf && !isOn(r + 1, c - 1) ? cornerR : 0;
         shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
       }
     }
