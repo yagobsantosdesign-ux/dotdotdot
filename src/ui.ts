@@ -44,6 +44,89 @@ const progress = $("progress");
 const progressBar = $("progress-bar");
 const lblThreshold = $("lbl-threshold");
 
+// --- i18n (English default, Portuguese toggle) ---
+type Lang = "en" | "pt";
+let lang: Lang = "en";
+type StatusState =
+  | { kind: "idle" }
+  | { kind: "image"; name: string; w: number; h: number; mask: "alpha" | "luma" }
+  | { kind: "random"; style: RandomStyle }
+  | { kind: "error" };
+let statusState: StatusState = { kind: "idle" };
+
+const STR = {
+  en: {
+    density: "Density", dotSize: "Dot size", dotWidth: "Dot width", spacing: "Spacing",
+    fill: "Fill", threshold: "Threshold", invert: "Invert", generate: "Generate", close: "Close",
+    cloud: "Cloud", burst: "Explosion", dust: "Dust", mirror: "Symmetric",
+    idle: "Select an image, or tap the smiley 🙂", imgWord: "Image",
+    silhouette: "silhouette mode", luminance: "luminance mode", randomWord: "Random",
+    decodeErr: "Couldn't decode the image.", shapes: "shapes", output: "output",
+    tooMany: " — lots of nodes, lower the density",
+    expand: "Expand preview", collapse: "Collapse preview", reroll: "Generate random shape",
+    resize: "Drag to resize", langTitle: "Mudar para português", about: "About",
+    role: "Product Designer",
+    blurb: "dot dot dot is a free, personal project by Yago Bispo. If it helped you, come say hi.",
+    portfolio: "Portfolio", instagram: "Instagram", threads: "Threads",
+  },
+  pt: {
+    density: "Densidade", dotSize: "Tamanho do dot", dotWidth: "Largura do dot", spacing: "Espaçamento",
+    fill: "Preenchimento", threshold: "Threshold", invert: "Inverter", generate: "Gerar", close: "Fechar",
+    cloud: "Nuvem", burst: "Explosão", dust: "Poeira", mirror: "Simétrico",
+    idle: "Selecione uma imagem, ou clique na carinha 🙂", imgWord: "Imagem",
+    silhouette: "modo silhueta", luminance: "modo luminância", randomWord: "Aleatório",
+    decodeErr: "Não foi possível decodificar a imagem.", shapes: "formas", output: "saída",
+    tooMany: " — muitos nós, baixe a densidade",
+    expand: "Expandir visualização", collapse: "Recolher visualização", reroll: "Gerar forma aleatória",
+    resize: "Arraste para redimensionar", langTitle: "Switch to English", about: "Sobre",
+    role: "Product Designer",
+    blurb: "o dot dot dot é um projeto pessoal e gratuito do Yago Bispo. Se te ajudou, vem trocar ideia.",
+    portfolio: "Portfólio", instagram: "Instagram", threads: "Threads",
+  },
+} as const;
+function t(k: keyof (typeof STR)["en"]): string {
+  return STR[lang][k];
+}
+
+function renderStatus() {
+  const s = statusState;
+  if (s.kind === "image")
+    statusEl.textContent = `${t("imgWord")}: ${s.name} (${s.w}×${s.h}) · ${s.mask === "alpha" ? t("silhouette") : t("luminance")}`;
+  else if (s.kind === "random") statusEl.textContent = `${t("randomWord")} · ${t(s.style)}`;
+  else if (s.kind === "error") statusEl.textContent = t("decodeErr");
+  else statusEl.textContent = t("idle");
+}
+
+function applyLang() {
+  const q = (sel: string) => document.querySelector(sel) as HTMLElement;
+  q("#s-density .slabel span").textContent = t("density");
+  q("#s-dot .slabel span").textContent = t("dotSize");
+  q("#s-width .slabel span").textContent = t("dotWidth");
+  q("#s-gap .slabel span").textContent = t("spacing");
+  q("#chk-invert > span:first-child").textContent = t("invert");
+  genBtn.textContent = t("generate");
+  $("close").textContent = t("close");
+  q('#rstyle .seg[data-style="cloud"]').textContent = t("cloud");
+  q('#rstyle .seg[data-style="burst"]').textContent = t("burst");
+  q('#rstyle .seg[data-style="dust"]').textContent = t("dust");
+  q('#rstyle .seg[data-style="mirror"]').textContent = t("mirror");
+  lblThreshold.textContent = mode === "random" ? t("fill") : t("threshold");
+  $("smiley").title = t("reroll");
+  $("expand").title = expanded ? t("collapse") : t("expand");
+  $("resize").title = t("resize");
+  const langBtn = $("lang");
+  langBtn.title = t("langTitle");
+  langBtn.textContent = lang.toUpperCase();
+  $("about").title = t("about");
+  $("about-role").textContent = t("role");
+  $("about-blurb").textContent = t("blurb");
+  $("lnk-portfolio").textContent = t("portfolio");
+  $("lnk-instagram").textContent = t("instagram");
+  $("lnk-threads").textContent = t("threads");
+  renderStatus();
+  recompute(false); // rebuild the estimate text in the new language immediately
+}
+
 // --- custom sliders (pointer-captured so dragging works outside the track) ---
 type Slider = { value: number; min: number; max: number };
 const sliders: Record<string, Slider> = {};
@@ -437,9 +520,9 @@ function recompute(forceRegrid: boolean) {
   renderPreview(shapes, canvasW, canvasH);
 
   const n = shapes.length;
-  estimateEl.textContent = `${n.toLocaleString()} formas • saída ${Math.round(canvasW)}×${Math.round(canvasH)} px`;
+  estimateEl.textContent = `${n.toLocaleString()} ${t("shapes")} • ${t("output")} ${Math.round(canvasW)}×${Math.round(canvasH)} px`;
   estimateEl.classList.toggle("warn", n > WARN_COUNT);
-  if (n > WARN_COUNT) estimateEl.textContent += " — muitos nós, baixe a densidade";
+  if (n > WARN_COUNT) estimateEl.textContent += t("tooMany");
   genBtn.disabled = n === 0;
 }
 
@@ -458,12 +541,6 @@ initSlider("s-gap", scheduleRecompute, false);
 
 // --- random styles ---
 const rndbar = $("rndbar");
-const STYLE_LABEL: Record<RandomStyle, string> = {
-  cloud: "Nuvem",
-  burst: "Explosão",
-  dust: "Poeira",
-  mirror: "Simétrico",
-};
 
 function applyStyleUI() {
   document.querySelectorAll<HTMLElement>("#rstyle .seg").forEach((b) => {
@@ -476,13 +553,14 @@ function showRandom(newSeed: boolean, resetFill: boolean) {
   mode = "random";
   rndbar.classList.remove("hidden");
   $("s-width").classList.remove("is-hidden");
-  lblThreshold.textContent = "Preenchimento";
+  lblThreshold.textContent = t("fill");
   if (resetFill || !wasRandom) {
     setInvert(false);
     setThreshold(STYLE_FILL[randomStyle]);
   }
   if (newSeed) randomSeed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
-  statusEl.textContent = `Aleatório · ${STYLE_LABEL[randomStyle]}`;
+  statusState = { kind: "random", style: randomStyle };
+  renderStatus();
   regenRandom(readParams().cols);
   recompute(false);
 }
@@ -511,7 +589,7 @@ expandBtn.addEventListener("click", () => {
   expanded = !expanded;
   appEl.classList.toggle("expanded", expanded);
   expandBtn.classList.toggle("on", expanded);
-  expandBtn.title = expanded ? "Recolher visualização" : "Expandir visualização";
+  expandBtn.title = expanded ? t("collapse") : t("expand");
   applyWindowSize(expanded ? 960 : 360, expanded ? 720 : 680);
 });
 
@@ -525,22 +603,23 @@ async function onImage(bytes: Uint8Array, name: string) {
     rndbar.classList.add("hidden");
     $("s-width").classList.add("is-hidden");
     gridCols = 0;
-    lblThreshold.textContent = "Threshold";
+    lblThreshold.textContent = t("threshold");
     sampleGrid(readParams().cols);
     const transp = transparentFraction();
     setInvert(false);
     if (transp > 0.12) {
       maskMode = "alpha";
       setThreshold(40);
-      statusEl.textContent = `Imagem: ${name} (${imgW}×${imgH}) · modo silhueta`;
     } else {
       maskMode = "luma";
       setThreshold(128);
-      statusEl.textContent = `Imagem: ${name} (${imgW}×${imgH}) · modo luminância`;
     }
+    statusState = { kind: "image", name, w: imgW, h: imgH, mask: maskMode };
+    renderStatus();
     recompute(false);
   } catch {
-    statusEl.textContent = "Não foi possível decodificar a imagem.";
+    statusState = { kind: "error" };
+    renderStatus();
     bitmap = null;
     if (mode === "image") genBtn.disabled = true;
   }
@@ -597,7 +676,8 @@ window.onmessage = (event: MessageEvent) => {
     bitmap = null;
     lastShapes = [];
     genBtn.disabled = true;
-    statusEl.textContent = "Selecione uma imagem no canvas, ou clique na carinha 🙂";
+    statusState = { kind: "idle" };
+    renderStatus();
     estimateEl.textContent = "—";
     renderPreview([], 0, 0);
   } else if (msg.type === "progress") {
@@ -608,4 +688,16 @@ window.onmessage = (event: MessageEvent) => {
   }
 };
 
-statusEl.textContent = "Selecione uma imagem no canvas, ou clique na carinha 🙂";
+// --- language toggle + About panel ---
+$("lang").addEventListener("click", () => {
+  lang = lang === "en" ? "pt" : "en";
+  applyLang();
+});
+const aboutOverlay = $("aboutOverlay");
+$("about").addEventListener("click", () => aboutOverlay.classList.remove("hidden"));
+$("aboutClose").addEventListener("click", () => aboutOverlay.classList.add("hidden"));
+aboutOverlay.addEventListener("click", (e) => {
+  if (e.target === aboutOverlay) aboutOverlay.classList.add("hidden");
+});
+
+applyLang(); // sets all labels/status for the default language
