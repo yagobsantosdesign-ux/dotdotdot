@@ -42,6 +42,10 @@ let imgStyle: "dots" | "print" = "dots"; // "print" = high-contrast dithered (1-
 const STYLE_FILL: Record<RandomStyle, number> = { cloud: 145, burst: 155, dust: 100, mirror: 145 };
 let lastShapes: Shape[] = [];
 let lastCanvas = { w: 0, h: 0 };
+// preview navigation: zoom (>=1) and pan offset in screen px
+let zoom = 1;
+let panX = 0;
+let panY = 0;
 
 // --- dom ---
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -80,6 +84,7 @@ const STR = {
     role: "Product Designer",
     blurb: "dot dot dot is a free, personal project by Yago Bispo. If it helped you, come say hi.",
     portfolio: "Portfolio", instagram: "Instagram", threads: "Threads",
+    previewHint: "Scroll to zoom · drag to pan · double-click to reset",
   },
   pt: {
     density: "Densidade", dotSize: "Tamanho do dot", dotWidth: "Largura do dot", spacing: "Espaçamento",
@@ -96,6 +101,7 @@ const STR = {
     role: "Product Designer",
     blurb: "o dot dot dot é um projeto pessoal e gratuito do Yago Bispo. Se te ajudou, vem trocar ideia.",
     portfolio: "Portfólio", instagram: "Instagram", threads: "Threads",
+    previewHint: "Scroll: zoom · arraste: mover · duplo-clique: resetar",
   },
 } as const;
 function t(k: keyof (typeof STR)["en"]): string {
@@ -136,6 +142,7 @@ function applyLang() {
   $("smiley").title = t("reroll");
   $("expand").title = expanded ? t("collapse") : t("expand");
   $("resize").title = t("resize");
+  preview.title = t("previewHint");
   const langBtn = $("lang");
   langBtn.title = t("langTitle");
   langBtn.textContent = lang.toUpperCase();
@@ -599,9 +606,10 @@ function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
   pctx.fillRect(0, 0, cssW, cssH);
   if (!shapes.length || canvasW === 0) return;
 
-  const scale = Math.min(cssW / canvasW, cssH / canvasH);
-  const offX = (cssW - canvasW * scale) / 2;
-  const offY = (cssH - canvasH * scale) / 2;
+  const fit = Math.min(cssW / canvasW, cssH / canvasH);
+  const scale = fit * zoom;
+  const offX = (cssW - canvasW * scale) / 2 + panX;
+  const offY = (cssH - canvasH * scale) / 2 + panY;
   pctx.fillStyle = "#fff";
   for (const s of shapes) {
     const x = offX + s.x * scale;
@@ -900,6 +908,77 @@ $("about").addEventListener("click", () => aboutOverlay.classList.remove("hidden
 $("aboutClose").addEventListener("click", () => aboutOverlay.classList.add("hidden"));
 aboutOverlay.addEventListener("click", (e) => {
   if (e.target === aboutOverlay) aboutOverlay.classList.add("hidden");
+});
+
+// --- preview zoom & pan ---
+function redraw() {
+  renderPreview(lastShapes, lastCanvas.w, lastCanvas.h);
+}
+preview.addEventListener(
+  "wheel",
+  (e) => {
+    if (!lastShapes.length) return;
+    e.preventDefault();
+    const rect = preview.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const cw = lastCanvas.w || 1;
+    const ch = lastCanvas.h || 1;
+    const cssW = preview.clientWidth;
+    const cssH = preview.clientHeight;
+    const fit = Math.min(cssW / cw, cssH / ch);
+    const oldScale = fit * zoom;
+    const offX = (cssW - cw * oldScale) / 2 + panX;
+    const offY = (cssH - ch * oldScale) / 2 + panY;
+    const wx = (mx - offX) / oldScale; // world point under the cursor (stays fixed)
+    const wy = (my - offY) / oldScale;
+    zoom = Math.min(16, Math.max(1, zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    const newScale = fit * zoom;
+    panX = mx - wx * newScale - (cssW - cw * newScale) / 2;
+    panY = my - wy * newScale - (cssH - ch * newScale) / 2;
+    if (zoom <= 1) {
+      zoom = 1;
+      panX = 0;
+      panY = 0;
+    }
+    preview.style.cursor = zoom > 1 ? "grab" : "";
+    redraw();
+  },
+  { passive: false }
+);
+let dragging = false;
+let dragMx = 0;
+let dragMy = 0;
+preview.addEventListener("pointerdown", (e) => {
+  if (zoom <= 1) return;
+  dragging = true;
+  preview.setPointerCapture(e.pointerId);
+  dragMx = e.clientX;
+  dragMy = e.clientY;
+  preview.style.cursor = "grabbing";
+});
+preview.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  panX += e.clientX - dragMx;
+  panY += e.clientY - dragMy;
+  dragMx = e.clientX;
+  dragMy = e.clientY;
+  redraw();
+});
+const endPreviewDrag = (e: PointerEvent) => {
+  if (!dragging) return;
+  dragging = false;
+  preview.releasePointerCapture(e.pointerId);
+  preview.style.cursor = zoom > 1 ? "grab" : "";
+};
+preview.addEventListener("pointerup", endPreviewDrag);
+preview.addEventListener("pointercancel", endPreviewDrag);
+preview.addEventListener("dblclick", () => {
+  zoom = 1;
+  panX = 0;
+  panY = 0;
+  preview.style.cursor = "";
+  redraw();
 });
 
 applyModeUI();
