@@ -226,6 +226,8 @@ let modular = false;
 modularEl.addEventListener("click", () => {
   modular = !modular;
   modularEl.classList.toggle("on", modular);
+  // Modular is per-cell (no run-length merge), so keep the grid chunky and light.
+  if (modular && sliders["s-density"].value > 90) setSliderVal("s-density", 60);
   scheduleRecompute(false);
 });
 
@@ -244,7 +246,7 @@ function readParams(): Params {
     dissolveDir,
     dither: mode === "image" && imgStyle === "print",
     contrast: sliders["s-contrast"].value,
-    modular,
+    modular: mode === "random" && modular, // Modular is random-only (never on images)
   };
 }
 function setThreshold(v: number) {
@@ -739,6 +741,7 @@ function enterImage(style: "dots" | "print") {
   imgStyle = style;
   rndbar.classList.add("hidden");
   $("s-width").classList.add("is-hidden");
+  $("chk-modular").classList.add("is-hidden");
   $("s-contrast").classList.toggle("is-hidden", style !== "print");
   if (style === "print" && !wasPrint) applyPrintDefaults();
   applyModeUI();
@@ -751,6 +754,7 @@ function showRandom(newSeed: boolean, resetFill: boolean) {
   mode = "random";
   rndbar.classList.remove("hidden");
   $("s-width").classList.remove("is-hidden");
+  $("chk-modular").classList.remove("is-hidden");
   $("s-contrast").classList.add("is-hidden");
   applyModeUI();
   lblThreshold.textContent = t("fill");

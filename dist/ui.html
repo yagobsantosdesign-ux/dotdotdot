@@ -103,7 +103,7 @@
       <span>Inverter</span>
       <span class="sw"><span class="knob"></span></span>
     </label>
-    <label class="switch" id="chk-modular">
+    <label class="switch is-hidden" id="chk-modular">
       <span>Modular</span>
       <span class="sw"><span class="knob"></span></span>
     </label>
@@ -558,6 +558,7 @@
   modularEl.addEventListener("click", () => {
     modular = !modular;
     modularEl.classList.toggle("on", modular);
+    if (modular && sliders["s-density"].value > 90) setSliderVal("s-density", 60);
     scheduleRecompute(false);
   });
   function readParams() {
@@ -575,7 +576,8 @@
       dissolveDir,
       dither: mode === "image" && imgStyle === "print",
       contrast: sliders["s-contrast"].value,
-      modular
+      modular: mode === "random" && modular
+      // Modular is random-only (never on images)
     };
   }
   function setThreshold(v) {
@@ -1009,6 +1011,7 @@
     imgStyle = style;
     rndbar.classList.add("hidden");
     $("s-width").classList.add("is-hidden");
+    $("chk-modular").classList.add("is-hidden");
     $("s-contrast").classList.toggle("is-hidden", style !== "print");
     if (style === "print" && !wasPrint) applyPrintDefaults();
     applyModeUI();
@@ -1020,6 +1023,7 @@
     mode = "random";
     rndbar.classList.remove("hidden");
     $("s-width").classList.remove("is-hidden");
+    $("chk-modular").classList.remove("is-hidden");
     $("s-contrast").classList.add("is-hidden");
     applyModeUI();
     lblThreshold.textContent = t("fill");
