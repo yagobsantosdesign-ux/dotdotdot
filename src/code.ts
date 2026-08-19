@@ -69,7 +69,7 @@ async function generate(shapes: Shape[], canvasW: number, canvasH: number) {
     r.resize(w, h);
     r.x = s.x;
     r.y = s.y;
-    r.cornerRadius = Math.min(w, h) / 2;
+    r.cornerRadius = Math.max(0, Math.min(s.radius, Math.min(w, h) / 2));
     r.fills = [{ type: "SOLID", color: WHITE }];
     nodes.push(r);
 

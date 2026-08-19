@@ -7,6 +7,7 @@ const WARN_COUNT = 20000;
 const ALPHA_CUTOFF = 32;
 const MAX_OUTPUT = 1500; // longest side of the generated result, in px
 
+type DissolveDir = "top" | "bottom" | "left" | "right";
 type Params = {
   cols: number;
   threshold: number;
@@ -14,6 +15,10 @@ type Params = {
   widthAmt: number; // 0..100: how much of each pill's length is kept (100 = full pill)
   gap: number;
   invert: boolean;
+  roundness: number; // 0 = square corners, 100 = fully round (capsule/circle)
+  dissolve: number; // 0..100: how strongly cells scatter toward the dissolving edge
+  reach: number; // 0..100: how far the dissolve gradient reaches into the figure
+  dissolveDir: DissolveDir;
 };
 
 // --- state ---
@@ -29,6 +34,7 @@ let maskMode: "alpha" | "luma" = "luma";
 type RandomStyle = "cloud" | "burst" | "dust" | "mirror";
 let randomStyle: RandomStyle = "cloud";
 let randomSeed = 1;
+let dissolveDir: DissolveDir = "top";
 const STYLE_FILL: Record<RandomStyle, number> = { cloud: 145, burst: 155, dust: 100, mirror: 145 };
 let lastShapes: Shape[] = [];
 let lastCanvas = { w: 0, h: 0 };
@@ -57,6 +63,7 @@ let statusState: StatusState = { kind: "idle" };
 const STR = {
   en: {
     density: "Density", dotSize: "Dot size", dotWidth: "Dot width", spacing: "Spacing",
+    corners: "Corners", dissolve: "Dissolve", reach: "Reach",
     fill: "Fill", threshold: "Threshold", invert: "Invert", generate: "Generate", close: "Close",
     cloud: "Cloud", burst: "Explosion", dust: "Dust", mirror: "Symmetric",
     modeImage: "Image", modeRandom: "Random",
@@ -72,6 +79,7 @@ const STR = {
   },
   pt: {
     density: "Densidade", dotSize: "Tamanho do dot", dotWidth: "Largura do dot", spacing: "Espaçamento",
+    corners: "Cantos", dissolve: "Dissolver", reach: "Alcance",
     fill: "Preenchimento", threshold: "Threshold", invert: "Inverter", generate: "Gerar", close: "Fechar",
     cloud: "Nuvem", burst: "Explosão", dust: "Poeira", mirror: "Simétrico",
     modeImage: "Imagem", modeRandom: "Aleatório",
@@ -105,6 +113,9 @@ function applyLang() {
   q("#s-dot .slabel span").textContent = t("dotSize");
   q("#s-width .slabel span").textContent = t("dotWidth");
   q("#s-gap .slabel span").textContent = t("spacing");
+  q("#s-round .slabel span").textContent = t("corners");
+  q("#s-dissolve .slabel span").textContent = t("dissolve");
+  q("#s-reach .slabel span").textContent = t("reach");
   q("#chk-invert > span:first-child").textContent = t("invert");
   genBtn.textContent = t("generate");
   $("close").textContent = t("close");
@@ -205,6 +216,10 @@ function readParams(): Params {
     widthAmt: mode === "random" ? sliders["s-width"].value : 100,
     gap: sliders["s-gap"].value,
     invert,
+    roundness: sliders["s-round"].value,
+    dissolve: sliders["s-dissolve"].value,
+    reach: sliders["s-reach"].value,
+    dissolveDir,
   };
 }
 function setThreshold(v: number) {
@@ -266,6 +281,14 @@ function previewAspect(): number {
 function smoothstep(a: number, b: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
+}
+
+// Stable per-cell pseudo-random in [0,1), used to scatter cells for the dissolve effect.
+function hash2(c: number, r: number, seed: number): number {
+  let h = (Math.imul(c, 374761393) + Math.imul(r, 668265263) + Math.imul(seed, 2147483647)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  h = h ^ (h >>> 16);
+  return (h >>> 0) / 4294967296;
 }
 
 function sampleBilinear(g: Float32Array, w: number, h: number, u: number, v: number): number {
@@ -411,6 +434,8 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
   const shapes: Shape[] = [];
   if (!lum) return { shapes, canvasW: 0, canvasH: 0 };
   const pitch = p.dotSize + p.gap; // square grid — the mark width never affects the canvas
+  const dissolveN = p.dissolve / 100;
+  const dStart = Math.min(0.98, 1 - p.reach / 100); // where the dissolve gradient begins
   const isOn = (r: number, c: number) => {
     const idx = r * gridCols + c;
     let base: boolean;
@@ -420,7 +445,17 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
       if (alphaArr![idx] < ALPHA_CUTOFF) return false;
       base = lum![idx] >= p.threshold;
     }
-    return p.invert ? !base : base;
+    if (!(p.invert ? !base : base)) return false;
+    if (dissolveN > 0) {
+      // `a` runs 0 (solid end) → 1 (dissolving edge); cells scatter more as a grows
+      const nx = gridCols > 1 ? c / (gridCols - 1) : 0;
+      const ny = gridRows > 1 ? r / (gridRows - 1) : 0;
+      const a =
+        p.dissolveDir === "top" ? 1 - ny : p.dissolveDir === "bottom" ? ny : p.dissolveDir === "left" ? 1 - nx : nx;
+      const keepP = 1 - dissolveN * smoothstep(dStart, 1.0, a);
+      if (hash2(c, r, randomSeed) > keepP) return false;
+    }
+    return true;
   };
 
   // Pass 1: collect runs and find the longest, so the "Largura" trim can be scaled to it.
@@ -446,16 +481,18 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
   const maxNatural = maxLen * pitch - p.gap;
   const trim = ((100 - p.widthAmt) / 100) * Math.max(0, maxNatural - p.dotSize);
 
-  // Pass 2: build the marks.
+  // Pass 2: build the marks. Corner radius runs from 0 (square) to min/2 (fully round).
+  const roundN = p.roundness / 100;
   for (const run of runs) {
     const x = run.c * pitch;
     const y = run.r * pitch;
     if (run.len === 1) {
-      shapes.push({ kind: "dot", x, y, w: p.dotSize, h: p.dotSize });
+      shapes.push({ kind: "dot", x, y, w: p.dotSize, h: p.dotSize, radius: (p.dotSize / 2) * roundN });
     } else {
       const natural = run.len * pitch - p.gap;
       const w = Math.max(p.dotSize, natural - trim); // never narrower than 1:1 (square)
-      shapes.push({ kind: "pill", x: x + (natural - w) / 2, y, w, h: p.dotSize });
+      const radius = (Math.min(w, p.dotSize) / 2) * roundN;
+      shapes.push({ kind: "pill", x: x + (natural - w) / 2, y, w, h: p.dotSize, radius });
     }
   }
   let canvasW = Math.max(1, gridCols * pitch - p.gap);
@@ -470,6 +507,7 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
       sh.y *= s;
       sh.w *= s;
       sh.h *= s;
+      sh.radius *= s;
     }
     canvasW *= s;
     canvasH *= s;
@@ -497,7 +535,7 @@ function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
     const y = offY + s.y * scale;
     const w = s.w * scale;
     const h = s.h * scale;
-    const rad = Math.min(w, h) / 2;
+    const rad = Math.min(Math.min(w, h) / 2, s.radius * scale);
     pctx.beginPath();
     pctx.moveTo(x + rad, y);
     pctx.arcTo(x + w, y, x + w, y + h, rad);
@@ -542,6 +580,27 @@ initSlider("s-width", scheduleRecompute, false); // random only: width of each d
 initSlider("s-threshold", scheduleRecompute, false);
 initSlider("s-dot", scheduleRecompute, false);
 initSlider("s-gap", scheduleRecompute, false);
+initSlider("s-round", scheduleRecompute, false);
+initSlider("s-reach", scheduleRecompute, false);
+function updateDissolveUI() {
+  $("dissolve-extra").classList.toggle("is-hidden", sliders["s-dissolve"].value === 0);
+}
+initSlider(
+  "s-dissolve",
+  (resample) => {
+    updateDissolveUI();
+    scheduleRecompute(resample);
+  },
+  false
+);
+
+document.querySelectorAll<HTMLElement>("#dirbar .seg").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    dissolveDir = (btn.dataset.dir as DissolveDir) || "top";
+    document.querySelectorAll<HTMLElement>("#dirbar .seg").forEach((b) => b.classList.toggle("on", b === btn));
+    scheduleRecompute(false);
+  });
+});
 
 // --- random styles ---
 const rndbar = $("rndbar");

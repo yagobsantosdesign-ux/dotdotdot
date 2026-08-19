@@ -73,6 +73,26 @@
       <div class="slabel"><span>Espaçamento</span><b class="sval">2</b></div>
       <div class="track"><div class="fill"></div><div class="thumb"></div></div>
     </div>
+    <div class="slider" id="s-round" data-min="0" data-max="100" data-value="100">
+      <div class="slabel"><span>Cantos</span><b class="sval">100</b></div>
+      <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+    </div>
+    <div class="slider" id="s-dissolve" data-min="0" data-max="100" data-value="0">
+      <div class="slabel"><span>Dissolver</span><b class="sval">0</b></div>
+      <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+    </div>
+    <div id="dissolve-extra" class="is-hidden">
+      <div class="segmented dirbar" id="dirbar">
+        <button class="seg on" data-dir="top" title="Dissolve para cima">↑</button>
+        <button class="seg" data-dir="bottom" title="Dissolve para baixo">↓</button>
+        <button class="seg" data-dir="left" title="Dissolve para a esquerda">←</button>
+        <button class="seg" data-dir="right" title="Dissolve para a direita">→</button>
+      </div>
+      <div class="slider" id="s-reach" data-min="0" data-max="100" data-value="65">
+        <div class="slabel"><span>Alcance</span><b class="sval">65</b></div>
+        <div class="track"><div class="fill"></div><div class="thumb"></div></div>
+      </div>
+    </div>
 
     <label class="switch" id="chk-invert">
       <span>Inverter</span>
@@ -145,8 +165,10 @@
   /* layout: stacked when compact, two columns (big preview + fixed panel) when expanded.
      Everything is sized to fit the window — the preview flexes, so there is never a scroll. */
   .body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
-  .stage { flex: 1 1 auto; min-height: 90px; display: flex; }
-  .panel { display: flex; flex-direction: column; gap: 12px; }
+  .stage { flex: 1 1 auto; min-height: 120px; display: flex; }
+  .panel { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+  /* fixed panel parts never shrink; only the controls card scrolls if space runs out */
+  .modebar, #rndbar, .footinfo, .actions { flex: 0 0 auto; }
   #app.expanded .body { flex-direction: row; align-items: stretch; }
   #app.expanded .stage { flex: 1 1 auto; }
   #app.expanded .panel { flex: 0 0 320px; min-width: 320px; }
@@ -202,9 +224,12 @@
     transition: background .14s ease, color .14s ease; }
   .seg:hover { color: var(--text); }
   .seg.on { background: var(--accent); color: var(--accent-ink); }
+  #dissolve-extra { display: flex; flex-direction: column; gap: 12px; }
+  .dirbar .seg { font-size: 15px; line-height: 1; }
 
   .card { border-radius: 18px; padding: 14px 16px; display: flex;
     flex-direction: column; gap: 12px; }
+  .card.controls { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
   /* sliders (horizontal inset so the knob never touches the card wall) */
   .slider { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
