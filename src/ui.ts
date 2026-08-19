@@ -21,6 +21,7 @@ type Params = {
   dissolveDir: DissolveDir;
   dither: boolean; // "Print" mode: 1-bit Floyd–Steinberg dithering instead of threshold
   contrast: number; // 0..100: contrast applied before dithering
+  modular: boolean; // render ON cells as one connected blob, rounding only exposed corners
 };
 
 // --- state ---
@@ -67,7 +68,7 @@ const STR = {
   en: {
     density: "Density", dotSize: "Dot size", dotWidth: "Dot width", spacing: "Spacing",
     corners: "Corners", dissolve: "Dissolve", reach: "Reach", contrast: "Contrast",
-    fill: "Fill", threshold: "Threshold", invert: "Invert", generate: "Generate", close: "Close",
+    fill: "Fill", threshold: "Threshold", invert: "Invert", modular: "Modular", generate: "Generate", close: "Close",
     cloud: "Cloud", burst: "Explosion", dust: "Dust", mirror: "Symmetric",
     modeDots: "Dots", modePrint: "Print", modeRandom: "Random",
     idle: "Select an image, or tap the smiley 🙂", imgWord: "Image",
@@ -83,7 +84,7 @@ const STR = {
   pt: {
     density: "Densidade", dotSize: "Tamanho do dot", dotWidth: "Largura do dot", spacing: "Espaçamento",
     corners: "Cantos", dissolve: "Dissolver", reach: "Alcance", contrast: "Contraste",
-    fill: "Preenchimento", threshold: "Threshold", invert: "Inverter", generate: "Gerar", close: "Fechar",
+    fill: "Preenchimento", threshold: "Threshold", invert: "Inverter", modular: "Modular", generate: "Gerar", close: "Fechar",
     cloud: "Nuvem", burst: "Explosão", dust: "Poeira", mirror: "Simétrico",
     modeDots: "Pontos", modePrint: "Print", modeRandom: "Aleatório",
     idle: "Selecione uma imagem, ou clique na carinha 🙂", imgWord: "Imagem",
@@ -120,6 +121,7 @@ function applyLang() {
   q("#s-dissolve .slabel span").textContent = t("dissolve");
   q("#s-reach .slabel span").textContent = t("reach");
   q("#chk-invert > span:first-child").textContent = t("invert");
+  q("#chk-modular > span:first-child").textContent = t("modular");
   genBtn.textContent = t("generate");
   $("close").textContent = t("close");
   q('#rstyle .seg[data-style="cloud"]').textContent = t("cloud");
@@ -212,6 +214,14 @@ function setInvert(v: boolean) {
   invertEl.classList.toggle("on", v);
 }
 
+const modularEl = $("chk-modular");
+let modular = false;
+modularEl.addEventListener("click", () => {
+  modular = !modular;
+  modularEl.classList.toggle("on", modular);
+  scheduleRecompute(false);
+});
+
 function readParams(): Params {
   return {
     cols: sliders["s-density"].value,
@@ -227,6 +237,7 @@ function readParams(): Params {
     dissolveDir,
     dither: mode === "image" && imgStyle === "print",
     contrast: sliders["s-contrast"].value,
+    modular,
   };
 }
 function setThreshold(v: number) {
@@ -469,6 +480,7 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
   const dStart = Math.min(0.98, 1 - p.reach / 100); // where the dissolve gradient begins
   const dith = p.dither ? ditherGrid(lum, gridCols, gridRows, p.threshold, p.contrast) : null;
   const isOn = (r: number, c: number) => {
+    if (r < 0 || c < 0 || r >= gridRows || c >= gridCols) return false;
     const idx = r * gridCols + c;
     let base: boolean;
     if (dith) {
@@ -493,45 +505,70 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
     return true;
   };
 
-  // Pass 1: collect runs and find the longest, so the "Largura" trim can be scaled to it.
-  const runs: { r: number; c: number; len: number }[] = [];
-  let maxLen = 1;
-  for (let r = 0; r < gridRows; r++) {
-    let c = 0;
-    while (c < gridCols) {
-      if (!isOn(r, c)) {
-        c++;
-        continue;
-      }
-      let len = 1;
-      while (c + len < gridCols && isOn(r, c + len)) len++;
-      runs.push({ r, c, len });
-      if (len > maxLen) maxLen = len;
-      c += len;
-    }
-  }
-
-  // Trim scaled to the longest pill: at 0 the longest reaches the 1:1 floor, and shorter
-  // pills (which need less trim) square off earlier — the floor clamps each individually.
-  const maxNatural = maxLen * pitch - p.gap;
-  const trim = ((100 - p.widthAmt) / 100) * Math.max(0, maxNatural - p.dotSize);
-
-  // Pass 2: build the marks. Corner radius runs from 0 (square) to min/2 (fully round).
   const roundN = p.roundness / 100;
-  for (const run of runs) {
-    const x = run.c * pitch;
-    const y = run.r * pitch;
-    if (run.len === 1) {
-      shapes.push({ kind: "dot", x, y, w: p.dotSize, h: p.dotSize, radius: (p.dotSize / 2) * roundN });
-    } else {
-      const natural = run.len * pitch - p.gap;
-      const w = Math.max(p.dotSize, natural - trim); // never narrower than 1:1 (square)
-      const radius = (Math.min(w, p.dotSize) / 2) * roundN;
-      shapes.push({ kind: "pill", x: x + (natural - w) / 2, y, w, h: p.dotSize, radius });
+  let canvasW: number;
+  let canvasH: number;
+
+  if (p.modular) {
+    // Each ON cell fills its whole cell so neighbours touch and connect. Round only the
+    // corners whose two orthogonal neighbours are both OFF (exposed outer corners).
+    const cornerR = (pitch / 2) * roundN;
+    for (let r = 0; r < gridRows; r++) {
+      for (let c = 0; c < gridCols; c++) {
+        if (!isOn(r, c)) continue;
+        const up = isOn(r - 1, c);
+        const dn = isOn(r + 1, c);
+        const lf = isOn(r, c - 1);
+        const rt = isOn(r, c + 1);
+        const tl = !up && !lf ? cornerR : 0;
+        const tr = !up && !rt ? cornerR : 0;
+        const br = !dn && !rt ? cornerR : 0;
+        const bl = !dn && !lf ? cornerR : 0;
+        shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
+      }
     }
+    canvasW = Math.max(1, gridCols * pitch);
+    canvasH = Math.max(1, gridRows * pitch);
+  } else {
+    // Pass 1: collect runs and find the longest, so the "Largura" trim can be scaled to it.
+    const runs: { r: number; c: number; len: number }[] = [];
+    let maxLen = 1;
+    for (let r = 0; r < gridRows; r++) {
+      let c = 0;
+      while (c < gridCols) {
+        if (!isOn(r, c)) {
+          c++;
+          continue;
+        }
+        let len = 1;
+        while (c + len < gridCols && isOn(r, c + len)) len++;
+        runs.push({ r, c, len });
+        if (len > maxLen) maxLen = len;
+        c += len;
+      }
+    }
+
+    // Trim scaled to the longest pill: at 0 the longest reaches the 1:1 floor, and shorter
+    // pills (which need less trim) square off earlier — the floor clamps each individually.
+    const maxNatural = maxLen * pitch - p.gap;
+    const trim = ((100 - p.widthAmt) / 100) * Math.max(0, maxNatural - p.dotSize);
+
+    // Pass 2: build the marks. Corner radius runs from 0 (square) to min/2 (fully round).
+    for (const run of runs) {
+      const x = run.c * pitch;
+      const y = run.r * pitch;
+      if (run.len === 1) {
+        shapes.push({ kind: "dot", x, y, w: p.dotSize, h: p.dotSize, radius: (p.dotSize / 2) * roundN });
+      } else {
+        const natural = run.len * pitch - p.gap;
+        const w = Math.max(p.dotSize, natural - trim); // never narrower than 1:1 (square)
+        const radius = (Math.min(w, p.dotSize) / 2) * roundN;
+        shapes.push({ kind: "pill", x: x + (natural - w) / 2, y, w, h: p.dotSize, radius });
+      }
+    }
+    canvasW = Math.max(1, gridCols * pitch - p.gap);
+    canvasH = Math.max(1, gridRows * pitch - p.gap);
   }
-  let canvasW = Math.max(1, gridCols * pitch - p.gap);
-  let canvasH = Math.max(1, gridRows * pitch - p.gap);
 
   // Cap the output so the longest side never exceeds MAX_OUTPUT px: scale every
   // shape and the canvas by the same factor, preserving proportions.
@@ -543,6 +580,7 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
       sh.w *= s;
       sh.h *= s;
       sh.radius *= s;
+      if (sh.cr) sh.cr = [sh.cr[0] * s, sh.cr[1] * s, sh.cr[2] * s, sh.cr[3] * s];
     }
     canvasW *= s;
     canvasH *= s;
@@ -570,13 +608,26 @@ function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
     const y = offY + s.y * scale;
     const w = s.w * scale;
     const h = s.h * scale;
-    const rad = Math.min(Math.min(w, h) / 2, s.radius * scale);
+    const maxR = Math.min(w, h) / 2;
     pctx.beginPath();
-    pctx.moveTo(x + rad, y);
-    pctx.arcTo(x + w, y, x + w, y + h, rad);
-    pctx.arcTo(x + w, y + h, x, y + h, rad);
-    pctx.arcTo(x, y + h, x, y, rad);
-    pctx.arcTo(x, y, x + w, y, rad);
+    if (s.cr) {
+      const tl = Math.min(s.cr[0] * scale, maxR);
+      const tr = Math.min(s.cr[1] * scale, maxR);
+      const br = Math.min(s.cr[2] * scale, maxR);
+      const bl = Math.min(s.cr[3] * scale, maxR);
+      pctx.moveTo(x + tl, y);
+      pctx.arcTo(x + w, y, x + w, y + h, tr);
+      pctx.arcTo(x + w, y + h, x, y + h, br);
+      pctx.arcTo(x, y + h, x, y, bl);
+      pctx.arcTo(x, y, x + w, y, tl);
+    } else {
+      const rad = Math.min(maxR, s.radius * scale);
+      pctx.moveTo(x + rad, y);
+      pctx.arcTo(x + w, y, x + w, y + h, rad);
+      pctx.arcTo(x + w, y + h, x, y + h, rad);
+      pctx.arcTo(x, y + h, x, y, rad);
+      pctx.arcTo(x, y, x + w, y, rad);
+    }
     pctx.closePath();
     pctx.fill();
   }

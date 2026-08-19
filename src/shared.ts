@@ -6,7 +6,8 @@ export type Shape = {
   y: number;
   w: number;
   h: number;
-  radius: number; // corner radius in px (0 = square, min(w,h)/2 = fully round)
+  radius: number; // uniform corner radius in px (0 = square, min(w,h)/2 = fully round)
+  cr?: [number, number, number, number]; // modular mode: per-corner radii [tl, tr, br, bl]
 };
 
 // UI -> main

@@ -54,7 +54,15 @@
       r.resize(w, h);
       r.x = s.x;
       r.y = s.y;
-      r.cornerRadius = Math.max(0, Math.min(s.radius, Math.min(w, h) / 2));
+      const maxR = Math.min(w, h) / 2;
+      if (s.cr) {
+        r.topLeftRadius = Math.max(0, Math.min(s.cr[0], maxR));
+        r.topRightRadius = Math.max(0, Math.min(s.cr[1], maxR));
+        r.bottomRightRadius = Math.max(0, Math.min(s.cr[2], maxR));
+        r.bottomLeftRadius = Math.max(0, Math.min(s.cr[3], maxR));
+      } else {
+        r.cornerRadius = Math.max(0, Math.min(s.radius, maxR));
+      }
       r.fills = [{ type: "SOLID", color: WHITE }];
       nodes.push(r);
       done++;

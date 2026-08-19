@@ -103,6 +103,10 @@
       <span>Inverter</span>
       <span class="sw"><span class="knob"></span></span>
     </label>
+    <label class="switch" id="chk-modular">
+      <span>Modular</span>
+      <span class="sw"><span class="knob"></span></span>
+    </label>
   </div>
 
       <div class="footinfo">
@@ -364,6 +368,7 @@
       fill: "Fill",
       threshold: "Threshold",
       invert: "Invert",
+      modular: "Modular",
       generate: "Generate",
       close: "Close",
       cloud: "Cloud",
@@ -406,6 +411,7 @@
       fill: "Preenchimento",
       threshold: "Threshold",
       invert: "Inverter",
+      modular: "Modular",
       generate: "Gerar",
       close: "Fechar",
       cloud: "Nuvem",
@@ -458,6 +464,7 @@
     q("#s-dissolve .slabel span").textContent = t("dissolve");
     q("#s-reach .slabel span").textContent = t("reach");
     q("#chk-invert > span:first-child").textContent = t("invert");
+    q("#chk-modular > span:first-child").textContent = t("modular");
     genBtn.textContent = t("generate");
     $("close").textContent = t("close");
     q('#rstyle .seg[data-style="cloud"]').textContent = t("cloud");
@@ -540,6 +547,13 @@
     invert = v;
     invertEl.classList.toggle("on", v);
   }
+  var modularEl = $("chk-modular");
+  var modular = false;
+  modularEl.addEventListener("click", () => {
+    modular = !modular;
+    modularEl.classList.toggle("on", modular);
+    scheduleRecompute(false);
+  });
   function readParams() {
     return {
       cols: sliders["s-density"].value,
@@ -554,7 +568,8 @@
       reach: sliders["s-reach"].value,
       dissolveDir,
       dither: mode === "image" && imgStyle === "print",
-      contrast: sliders["s-contrast"].value
+      contrast: sliders["s-contrast"].value,
+      modular
     };
   }
   function setThreshold(v) {
@@ -769,6 +784,7 @@
     const dStart = Math.min(0.98, 1 - p.reach / 100);
     const dith = p.dither ? ditherGrid(lum, gridCols, gridRows, p.threshold, p.contrast) : null;
     const isOn = (r, c) => {
+      if (r < 0 || c < 0 || r >= gridRows || c >= gridCols) return false;
       const idx = r * gridCols + c;
       let base;
       if (dith) {
@@ -790,39 +806,61 @@
       }
       return true;
     };
-    const runs = [];
-    let maxLen = 1;
-    for (let r = 0; r < gridRows; r++) {
-      let c = 0;
-      while (c < gridCols) {
-        if (!isOn(r, c)) {
-          c++;
-          continue;
-        }
-        let len = 1;
-        while (c + len < gridCols && isOn(r, c + len)) len++;
-        runs.push({ r, c, len });
-        if (len > maxLen) maxLen = len;
-        c += len;
-      }
-    }
-    const maxNatural = maxLen * pitch - p.gap;
-    const trim = (100 - p.widthAmt) / 100 * Math.max(0, maxNatural - p.dotSize);
     const roundN = p.roundness / 100;
-    for (const run of runs) {
-      const x = run.c * pitch;
-      const y = run.r * pitch;
-      if (run.len === 1) {
-        shapes.push({ kind: "dot", x, y, w: p.dotSize, h: p.dotSize, radius: p.dotSize / 2 * roundN });
-      } else {
-        const natural = run.len * pitch - p.gap;
-        const w = Math.max(p.dotSize, natural - trim);
-        const radius = Math.min(w, p.dotSize) / 2 * roundN;
-        shapes.push({ kind: "pill", x: x + (natural - w) / 2, y, w, h: p.dotSize, radius });
+    let canvasW;
+    let canvasH;
+    if (p.modular) {
+      const cornerR = pitch / 2 * roundN;
+      for (let r = 0; r < gridRows; r++) {
+        for (let c = 0; c < gridCols; c++) {
+          if (!isOn(r, c)) continue;
+          const up = isOn(r - 1, c);
+          const dn = isOn(r + 1, c);
+          const lf = isOn(r, c - 1);
+          const rt = isOn(r, c + 1);
+          const tl = !up && !lf ? cornerR : 0;
+          const tr = !up && !rt ? cornerR : 0;
+          const br = !dn && !rt ? cornerR : 0;
+          const bl = !dn && !lf ? cornerR : 0;
+          shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
+        }
       }
+      canvasW = Math.max(1, gridCols * pitch);
+      canvasH = Math.max(1, gridRows * pitch);
+    } else {
+      const runs = [];
+      let maxLen = 1;
+      for (let r = 0; r < gridRows; r++) {
+        let c = 0;
+        while (c < gridCols) {
+          if (!isOn(r, c)) {
+            c++;
+            continue;
+          }
+          let len = 1;
+          while (c + len < gridCols && isOn(r, c + len)) len++;
+          runs.push({ r, c, len });
+          if (len > maxLen) maxLen = len;
+          c += len;
+        }
+      }
+      const maxNatural = maxLen * pitch - p.gap;
+      const trim = (100 - p.widthAmt) / 100 * Math.max(0, maxNatural - p.dotSize);
+      for (const run of runs) {
+        const x = run.c * pitch;
+        const y = run.r * pitch;
+        if (run.len === 1) {
+          shapes.push({ kind: "dot", x, y, w: p.dotSize, h: p.dotSize, radius: p.dotSize / 2 * roundN });
+        } else {
+          const natural = run.len * pitch - p.gap;
+          const w = Math.max(p.dotSize, natural - trim);
+          const radius = Math.min(w, p.dotSize) / 2 * roundN;
+          shapes.push({ kind: "pill", x: x + (natural - w) / 2, y, w, h: p.dotSize, radius });
+        }
+      }
+      canvasW = Math.max(1, gridCols * pitch - p.gap);
+      canvasH = Math.max(1, gridRows * pitch - p.gap);
     }
-    let canvasW = Math.max(1, gridCols * pitch - p.gap);
-    let canvasH = Math.max(1, gridRows * pitch - p.gap);
     const s = MAX_OUTPUT / Math.max(canvasW, canvasH);
     if (s < 1) {
       for (const sh of shapes) {
@@ -831,6 +869,7 @@
         sh.w *= s;
         sh.h *= s;
         sh.radius *= s;
+        if (sh.cr) sh.cr = [sh.cr[0] * s, sh.cr[1] * s, sh.cr[2] * s, sh.cr[3] * s];
       }
       canvasW *= s;
       canvasH *= s;
@@ -856,13 +895,26 @@
       const y = offY + s.y * scale;
       const w = s.w * scale;
       const h = s.h * scale;
-      const rad = Math.min(Math.min(w, h) / 2, s.radius * scale);
+      const maxR = Math.min(w, h) / 2;
       pctx.beginPath();
-      pctx.moveTo(x + rad, y);
-      pctx.arcTo(x + w, y, x + w, y + h, rad);
-      pctx.arcTo(x + w, y + h, x, y + h, rad);
-      pctx.arcTo(x, y + h, x, y, rad);
-      pctx.arcTo(x, y, x + w, y, rad);
+      if (s.cr) {
+        const tl = Math.min(s.cr[0] * scale, maxR);
+        const tr = Math.min(s.cr[1] * scale, maxR);
+        const br = Math.min(s.cr[2] * scale, maxR);
+        const bl = Math.min(s.cr[3] * scale, maxR);
+        pctx.moveTo(x + tl, y);
+        pctx.arcTo(x + w, y, x + w, y + h, tr);
+        pctx.arcTo(x + w, y + h, x, y + h, br);
+        pctx.arcTo(x, y + h, x, y, bl);
+        pctx.arcTo(x, y, x + w, y, tl);
+      } else {
+        const rad = Math.min(maxR, s.radius * scale);
+        pctx.moveTo(x + rad, y);
+        pctx.arcTo(x + w, y, x + w, y + h, rad);
+        pctx.arcTo(x + w, y + h, x, y + h, rad);
+        pctx.arcTo(x, y + h, x, y, rad);
+        pctx.arcTo(x, y, x + w, y, rad);
+      }
       pctx.closePath();
       pctx.fill();
     }
