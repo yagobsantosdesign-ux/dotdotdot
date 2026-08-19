@@ -38,6 +38,11 @@
     </div>
 
     <div class="panel">
+      <div class="segmented modebar" id="modebar">
+        <button class="seg on" data-mode="image">Image</button>
+        <button class="seg" data-mode="random">Random</button>
+      </div>
+
       <div id="rndbar" class="rndbar hidden">
         <div class="segmented" id="rstyle">
           <button class="seg on" data-style="cloud">Nuvem</button>
@@ -329,6 +334,8 @@
       burst: "Explosion",
       dust: "Dust",
       mirror: "Symmetric",
+      modeImage: "Image",
+      modeRandom: "Random",
       idle: "Select an image, or tap the smiley \u{1F642}",
       imgWord: "Image",
       silhouette: "silhouette mode",
@@ -364,6 +371,8 @@
       burst: "Explos\xE3o",
       dust: "Poeira",
       mirror: "Sim\xE9trico",
+      modeImage: "Imagem",
+      modeRandom: "Aleat\xF3rio",
       idle: "Selecione uma imagem, ou clique na carinha \u{1F642}",
       imgWord: "Imagem",
       silhouette: "modo silhueta",
@@ -410,6 +419,8 @@
     q('#rstyle .seg[data-style="burst"]').textContent = t("burst");
     q('#rstyle .seg[data-style="dust"]').textContent = t("dust");
     q('#rstyle .seg[data-style="mirror"]').textContent = t("mirror");
+    q('#modebar .seg[data-mode="image"]').textContent = t("modeImage");
+    q('#modebar .seg[data-mode="random"]').textContent = t("modeRandom");
     lblThreshold.textContent = mode === "random" ? t("fill") : t("threshold");
     $("smiley").title = t("reroll");
     $("expand").title = expanded ? t("collapse") : t("expand");
@@ -790,11 +801,25 @@
       b.classList.toggle("on", b.dataset.style === randomStyle);
     });
   }
+  function applyModeUI() {
+    document.querySelectorAll("#modebar .seg").forEach((b) => {
+      b.classList.toggle("on", b.dataset.mode === mode);
+    });
+  }
+  function enterImage() {
+    mode = "image";
+    rndbar.classList.add("hidden");
+    $("s-width").classList.add("is-hidden");
+    applyModeUI();
+    lblThreshold.textContent = t("threshold");
+    parent.postMessage({ pluginMessage: { type: "request-image" } }, "*");
+  }
   function showRandom(newSeed, resetFill) {
     const wasRandom = mode === "random";
     mode = "random";
     rndbar.classList.remove("hidden");
     $("s-width").classList.remove("is-hidden");
+    applyModeUI();
     lblThreshold.textContent = t("fill");
     if (resetFill || !wasRandom) {
       setInvert(false);
@@ -807,6 +832,12 @@
     recompute(false);
   }
   $("smiley").addEventListener("click", () => showRandom(true, false));
+  document.querySelectorAll("#modebar .seg").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.mode === "image") enterImage();
+      else showRandom(false, false);
+    });
+  });
   document.querySelectorAll("#rstyle .seg").forEach((btn) => {
     btn.addEventListener("click", () => {
       randomStyle = btn.dataset.style || "cloud";
@@ -850,6 +881,7 @@
         maskMode = "luma";
         setThreshold(128);
       }
+      applyModeUI();
       statusState = { kind: "image", name, w: imgW, h: imgH, mask: maskMode };
       renderStatus();
       recompute(false);
@@ -900,6 +932,7 @@
     const msg = event.data.pluginMessage;
     if (!msg) return;
     if (msg.type === "image") {
+      if (mode === "random") return;
       onImage(msg.bytes, msg.name);
     } else if (msg.type === "no-image") {
       if (mode === "random") return;
@@ -927,6 +960,7 @@
   aboutOverlay.addEventListener("click", (e) => {
     if (e.target === aboutOverlay) aboutOverlay.classList.add("hidden");
   });
+  applyModeUI();
   applyLang();
 })();
 

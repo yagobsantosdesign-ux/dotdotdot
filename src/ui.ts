@@ -59,6 +59,7 @@ const STR = {
     density: "Density", dotSize: "Dot size", dotWidth: "Dot width", spacing: "Spacing",
     fill: "Fill", threshold: "Threshold", invert: "Invert", generate: "Generate", close: "Close",
     cloud: "Cloud", burst: "Explosion", dust: "Dust", mirror: "Symmetric",
+    modeImage: "Image", modeRandom: "Random",
     idle: "Select an image, or tap the smiley 🙂", imgWord: "Image",
     silhouette: "silhouette mode", luminance: "luminance mode", randomWord: "Random",
     decodeErr: "Couldn't decode the image.", shapes: "shapes", output: "output",
@@ -73,6 +74,7 @@ const STR = {
     density: "Densidade", dotSize: "Tamanho do dot", dotWidth: "Largura do dot", spacing: "Espaçamento",
     fill: "Preenchimento", threshold: "Threshold", invert: "Inverter", generate: "Gerar", close: "Fechar",
     cloud: "Nuvem", burst: "Explosão", dust: "Poeira", mirror: "Simétrico",
+    modeImage: "Imagem", modeRandom: "Aleatório",
     idle: "Selecione uma imagem, ou clique na carinha 🙂", imgWord: "Imagem",
     silhouette: "modo silhueta", luminance: "modo luminância", randomWord: "Aleatório",
     decodeErr: "Não foi possível decodificar a imagem.", shapes: "formas", output: "saída",
@@ -110,6 +112,8 @@ function applyLang() {
   q('#rstyle .seg[data-style="burst"]').textContent = t("burst");
   q('#rstyle .seg[data-style="dust"]').textContent = t("dust");
   q('#rstyle .seg[data-style="mirror"]').textContent = t("mirror");
+  q('#modebar .seg[data-mode="image"]').textContent = t("modeImage");
+  q('#modebar .seg[data-mode="random"]').textContent = t("modeRandom");
   lblThreshold.textContent = mode === "random" ? t("fill") : t("threshold");
   $("smiley").title = t("reroll");
   $("expand").title = expanded ? t("collapse") : t("expand");
@@ -548,11 +552,28 @@ function applyStyleUI() {
   });
 }
 
+function applyModeUI() {
+  document.querySelectorAll<HTMLElement>("#modebar .seg").forEach((b) => {
+    b.classList.toggle("on", b.dataset.mode === mode);
+  });
+}
+
+// Switch to image mode and (re)load whatever image is selected in Figma.
+function enterImage() {
+  mode = "image";
+  rndbar.classList.add("hidden");
+  $("s-width").classList.add("is-hidden");
+  applyModeUI();
+  lblThreshold.textContent = t("threshold");
+  parent.postMessage({ pluginMessage: { type: "request-image" } }, "*");
+}
+
 function showRandom(newSeed: boolean, resetFill: boolean) {
   const wasRandom = mode === "random";
   mode = "random";
   rndbar.classList.remove("hidden");
   $("s-width").classList.remove("is-hidden");
+  applyModeUI();
   lblThreshold.textContent = t("fill");
   if (resetFill || !wasRandom) {
     setInvert(false);
@@ -566,6 +587,13 @@ function showRandom(newSeed: boolean, resetFill: boolean) {
 }
 
 $("smiley").addEventListener("click", () => showRandom(true, false));
+
+document.querySelectorAll<HTMLElement>("#modebar .seg").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.mode === "image") enterImage();
+    else showRandom(false, false); // switch to random, keep the current figure
+  });
+});
 
 document.querySelectorAll<HTMLElement>("#rstyle .seg").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -614,6 +642,7 @@ async function onImage(bytes: Uint8Array, name: string) {
       maskMode = "luma";
       setThreshold(128);
     }
+    applyModeUI();
     statusState = { kind: "image", name, w: imgW, h: imgH, mask: maskMode };
     renderStatus();
     recompute(false);
@@ -670,6 +699,7 @@ window.onmessage = (event: MessageEvent) => {
   const msg = event.data.pluginMessage as MainToUi | undefined;
   if (!msg) return;
   if (msg.type === "image") {
+    if (mode === "random") return; // stay in Random unless the user picked the Image tab
     onImage(msg.bytes, msg.name);
   } else if (msg.type === "no-image") {
     if (mode === "random") return; // keep the random figure on screen
@@ -700,4 +730,5 @@ aboutOverlay.addEventListener("click", (e) => {
   if (e.target === aboutOverlay) aboutOverlay.classList.add("hidden");
 });
 
+applyModeUI();
 applyLang(); // sets all labels/status for the default language
