@@ -540,17 +540,21 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
         const bl = !dn && !lf && !dBL ? cornerR : 0;
         shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
 
-        // Weld diagonally-connected cells: a rounded blob at the shared corner whose size
-        // grows with the corner radius, so higher "Cantos" merges them more (added once
-        // per junction, from the top cell of each diagonal pair via its bottom corners).
-        const weld = pitch * roundN * 0.6;
-        if (weld > 0.5) {
-          const wr = (weld / 2) * roundN;
+        // Weld diagonally-connected cells with a capsule ALONG the diagonal (not a square
+        // blob): thickness grows with the corner radius, so higher "Cantos" merges them
+        // more. Added once per junction, from the top cell of each diagonal pair.
+        const neck = pitch * roundN * 0.55; // neck thickness
+        if (neck > 0.5) {
+          const len = pitch * 0.95; // reaches into both diagonal cells
           if (!dn && !rt && dBR) {
-            shapes.push({ kind: "dot", x: (c + 1) * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+            const px = (c + 1) * pitch;
+            const py = (r + 1) * pitch;
+            shapes.push({ kind: "pill", x: px - len / 2, y: py - neck / 2, w: len, h: neck, radius: neck / 2, rot: Math.PI / 4 });
           }
           if (!dn && !lf && dBL) {
-            shapes.push({ kind: "dot", x: c * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+            const px = c * pitch;
+            const py = (r + 1) * pitch;
+            shapes.push({ kind: "pill", x: px - len / 2, y: py - neck / 2, w: len, h: neck, radius: neck / 2, rot: -Math.PI / 4 });
           }
         }
       }
@@ -633,11 +637,22 @@ function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
   const offY = (cssH - canvasH * scale) / 2 + panY;
   pctx.fillStyle = "#fff";
   for (const s of shapes) {
-    const x = offX + s.x * scale;
-    const y = offY + s.y * scale;
     const w = s.w * scale;
     const h = s.h * scale;
     const maxR = Math.min(w, h) / 2;
+    let x = offX + s.x * scale;
+    let y = offY + s.y * scale;
+    const rotated = !!s.rot;
+    if (rotated) {
+      // draw around the rect's center, rotated
+      const cx = offX + (s.x + s.w / 2) * scale;
+      const cy = offY + (s.y + s.h / 2) * scale;
+      pctx.save();
+      pctx.translate(cx, cy);
+      pctx.rotate(s.rot!);
+      x = -w / 2;
+      y = -h / 2;
+    }
     pctx.beginPath();
     if (s.cr) {
       const tl = Math.min(s.cr[0] * scale, maxR);
@@ -659,6 +674,7 @@ function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
     }
     pctx.closePath();
     pctx.fill();
+    if (rotated) pctx.restore();
   }
 }
 

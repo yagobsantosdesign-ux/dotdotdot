@@ -833,14 +833,18 @@
           const br = !dn && !rt && !dBR ? cornerR : 0;
           const bl = !dn && !lf && !dBL ? cornerR : 0;
           shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
-          const weld = pitch * roundN * 0.6;
-          if (weld > 0.5) {
-            const wr = weld / 2 * roundN;
+          const neck = pitch * roundN * 0.55;
+          if (neck > 0.5) {
+            const len = pitch * 0.95;
             if (!dn && !rt && dBR) {
-              shapes.push({ kind: "dot", x: (c + 1) * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+              const px = (c + 1) * pitch;
+              const py = (r + 1) * pitch;
+              shapes.push({ kind: "pill", x: px - len / 2, y: py - neck / 2, w: len, h: neck, radius: neck / 2, rot: Math.PI / 4 });
             }
             if (!dn && !lf && dBL) {
-              shapes.push({ kind: "dot", x: c * pitch - weld / 2, y: (r + 1) * pitch - weld / 2, w: weld, h: weld, radius: wr });
+              const px = c * pitch;
+              const py = (r + 1) * pitch;
+              shapes.push({ kind: "pill", x: px - len / 2, y: py - neck / 2, w: len, h: neck, radius: neck / 2, rot: -Math.PI / 4 });
             }
           }
         }
@@ -912,11 +916,21 @@
     const offY = (cssH - canvasH * scale) / 2 + panY;
     pctx.fillStyle = "#fff";
     for (const s of shapes) {
-      const x = offX + s.x * scale;
-      const y = offY + s.y * scale;
       const w = s.w * scale;
       const h = s.h * scale;
       const maxR = Math.min(w, h) / 2;
+      let x = offX + s.x * scale;
+      let y = offY + s.y * scale;
+      const rotated = !!s.rot;
+      if (rotated) {
+        const cx = offX + (s.x + s.w / 2) * scale;
+        const cy = offY + (s.y + s.h / 2) * scale;
+        pctx.save();
+        pctx.translate(cx, cy);
+        pctx.rotate(s.rot);
+        x = -w / 2;
+        y = -h / 2;
+      }
       pctx.beginPath();
       if (s.cr) {
         const tl = Math.min(s.cr[0] * scale, maxR);
@@ -938,6 +952,7 @@
       }
       pctx.closePath();
       pctx.fill();
+      if (rotated) pctx.restore();
     }
   }
   function recompute(forceRegrid) {

@@ -8,6 +8,7 @@ export type Shape = {
   h: number;
   radius: number; // uniform corner radius in px (0 = square, min(w,h)/2 = fully round)
   cr?: [number, number, number, number]; // modular mode: per-corner radii [tl, tr, br, bl]
+  rot?: number; // rotation in radians, around the shape's center (modular diagonal welds)
 };
 
 // UI -> main

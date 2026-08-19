@@ -52,8 +52,19 @@
       const w = Math.max(0.01, s.w);
       const h = Math.max(0.01, s.h);
       r.resize(w, h);
-      r.x = s.x;
-      r.y = s.y;
+      if (s.rot) {
+        const cx = s.x + w / 2;
+        const cy = s.y + h / 2;
+        const cos = Math.cos(s.rot);
+        const sin = Math.sin(s.rot);
+        r.relativeTransform = [
+          [cos, -sin, cx - (cos * (w / 2) - sin * (h / 2))],
+          [sin, cos, cy - (sin * (w / 2) + cos * (h / 2))]
+        ];
+      } else {
+        r.x = s.x;
+        r.y = s.y;
+      }
       const maxR = Math.min(w, h) / 2;
       if (s.cr) {
         r.topLeftRadius = Math.max(0, Math.min(s.cr[0], maxR));
