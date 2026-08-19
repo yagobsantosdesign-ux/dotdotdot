@@ -48,86 +48,27 @@
     let done = 0;
     for (let i = 0; i < shapes.length; i++) {
       const s = shapes[i];
-      if (s.fillet) {
+      if (s.kind === "path" && s.d) {
         const v = figma.createVector();
-        const R = s.radius;
-        const N = 10;
-        let cxr = 0;
-        let cyr = 0;
-        let a0 = 0;
-        let a1 = 0;
-        let leg = { x: 0, y: 0 };
-        if (s.fillet === "br") {
-          cxr = R;
-          cyr = R;
-          a0 = Math.PI;
-          a1 = 1.5 * Math.PI;
-          leg = { x: 0, y: R };
-        } else if (s.fillet === "bl") {
-          cxr = -R;
-          cyr = R;
-          a0 = -Math.PI / 2;
-          a1 = 0;
-          leg = { x: -R, y: 0 };
-        } else if (s.fillet === "tr") {
-          cxr = R;
-          cyr = -R;
-          a0 = Math.PI / 2;
-          a1 = Math.PI;
-          leg = { x: R, y: 0 };
-        } else {
-          cxr = -R;
-          cyr = -R;
-          a0 = Math.PI / 2;
-          a1 = 0;
-          leg = { x: -R, y: 0 };
-        }
-        let d = `M 0 0 L ${leg.x} ${leg.y}`;
-        for (let k = 0; k <= N; k++) {
-          const a = a0 + (a1 - a0) * k / N;
-          d += ` L ${(cxr + R * Math.cos(a)).toFixed(2)} ${(cyr + R * Math.sin(a)).toFixed(2)}`;
-        }
-        d += " Z";
-        v.vectorPaths = [{ windingRule: "NONZERO", data: d }];
+        v.vectorPaths = [{ windingRule: "NONZERO", data: s.d }];
         v.relativeTransform = [
           [1, 0, s.x],
           [0, 1, s.y]
         ];
         v.fills = [{ type: "SOLID", color: WHITE }];
+        v.name = "Modular";
         nodes.push(v);
         done++;
-        if (done % BATCH === 0) {
-          post({ type: "progress", done, total: shapes.length });
-          await new Promise((res) => setTimeout(res, 0));
-        }
         continue;
       }
       const r = figma.createRectangle();
       const w = Math.max(0.01, s.w);
       const h = Math.max(0.01, s.h);
       r.resize(w, h);
-      if (s.rot) {
-        const cx = s.x + w / 2;
-        const cy = s.y + h / 2;
-        const cos = Math.cos(s.rot);
-        const sin = Math.sin(s.rot);
-        r.relativeTransform = [
-          [cos, -sin, cx - (cos * (w / 2) - sin * (h / 2))],
-          [sin, cos, cy - (sin * (w / 2) + cos * (h / 2))]
-        ];
-      } else {
-        r.x = s.x;
-        r.y = s.y;
-      }
+      r.x = s.x;
+      r.y = s.y;
       const maxR = Math.min(w, h) / 2;
-      if (s.cr) {
-        r.topLeftRadius = Math.max(0, Math.min(s.cr[0], maxR));
-        r.topRightRadius = Math.max(0, Math.min(s.cr[1], maxR));
-        r.bottomRightRadius = Math.max(0, Math.min(s.cr[2], maxR));
-        r.bottomLeftRadius = Math.max(0, Math.min(s.cr[3], maxR));
-      } else {
-        r.cornerRadius = Math.max(0, Math.min(s.radius, maxR));
-      }
+      r.cornerRadius = Math.max(0, Math.min(s.radius, maxR));
       r.fills = [{ type: "SOLID", color: WHITE }];
       nodes.push(r);
       done++;

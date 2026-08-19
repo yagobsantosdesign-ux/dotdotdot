@@ -480,10 +480,114 @@ function regenRandom(cols: number) {
   maskMode = "luma";
 }
 
+// --- modular outline ---
+// Trace the boundary of the ON region as closed loops, then round every corner.
+// Cells that only touch diagonally are treated as connected: the loop crosses over at
+// that point, producing two concave corners that the fillet turns into a rounded neck.
+type BEdge = { x0: number; y0: number; x1: number; y1: number; used: boolean };
+
+function modularOutline(isOn: (r: number, c: number) => boolean, step: number, R: number): string {
+  // 1. Directed boundary edges, oriented so the material is always on the same side.
+  //    Outer loops come out clockwise, holes counter-clockwise -> NONZERO fill works.
+  const outgoing = new Map<number, BEdge[]>();
+  const edges: BEdge[] = [];
+  const key = (x: number, y: number) => y * (gridCols + 2) + x;
+  const add = (x0: number, y0: number, x1: number, y1: number) => {
+    const e: BEdge = { x0, y0, x1, y1, used: false };
+    edges.push(e);
+    const k = key(x0, y0);
+    const list = outgoing.get(k);
+    if (list) list.push(e);
+    else outgoing.set(k, [e]);
+  };
+  for (let r = 0; r < gridRows; r++) {
+    for (let c = 0; c < gridCols; c++) {
+      if (!isOn(r, c)) continue;
+      if (!isOn(r - 1, c)) add(c, r, c + 1, r); // top, left -> right
+      if (!isOn(r, c + 1)) add(c + 1, r, c + 1, r + 1); // right, down
+      if (!isOn(r + 1, c)) add(c + 1, r + 1, c, r + 1); // bottom, right -> left
+      if (!isOn(r, c - 1)) add(c, r + 1, c, r); // left, up
+    }
+  }
+  if (!edges.length) return "";
+
+  // 2. Chain the edges into closed loops.
+  const loops: number[][] = [];
+  for (const seed of edges) {
+    if (seed.used) continue;
+    const pts: number[] = [];
+    let e = seed;
+    while (e && !e.used) {
+      e.used = true;
+      pts.push(e.x0, e.y0);
+      const dx = Math.sign(e.x1 - e.x0);
+      const dy = Math.sign(e.y1 - e.y0);
+      const cands = (outgoing.get(key(e.x1, e.y1)) || []).filter((n) => !n.used);
+      if (!cands.length) break;
+      let next = cands[0];
+      if (cands.length > 1) {
+        // Ambiguous grid point (two ON cells meeting diagonally): take the turn that keeps
+        // them joined — the one that opens into a concave corner rather than closing off.
+        const tx = dy;
+        const ty = -dx;
+        next = cands.find((n) => Math.sign(n.x1 - n.x0) === tx && Math.sign(n.y1 - n.y0) === ty) || cands[0];
+      }
+      e = next;
+    }
+    if (pts.length >= 8) loops.push(pts); // needs at least 4 corners
+  }
+
+  // 3. Drop collinear points, then emit each loop with rounded corners.
+  const k = 0.5522847498; // circle-to-bezier constant, for the quarter-turn arcs
+  let d = "";
+  const f = (v: number) => (Math.abs(v) < 1e-4 ? "0" : v.toFixed(2));
+  for (const raw of loops) {
+    const v: number[] = [];
+    const n0 = raw.length / 2;
+    for (let i = 0; i < n0; i++) {
+      const px = raw[i * 2];
+      const py = raw[i * 2 + 1];
+      const ax = raw[((i + n0 - 1) % n0) * 2];
+      const ay = raw[((i + n0 - 1) % n0) * 2 + 1];
+      const bx = raw[((i + 1) % n0) * 2];
+      const by = raw[((i + 1) % n0) * 2 + 1];
+      if ((px - ax) * (by - py) - (py - ay) * (bx - px) === 0) continue; // straight through
+      v.push(px * step, py * step);
+    }
+    const n = v.length / 2;
+    if (n < 4) continue;
+    for (let i = 0; i < n; i++) {
+      const px = v[i * 2];
+      const py = v[i * 2 + 1];
+      const ax = v[((i + n - 1) % n) * 2];
+      const ay = v[((i + n - 1) % n) * 2 + 1];
+      const bx = v[((i + 1) % n) * 2];
+      const by = v[((i + 1) % n) * 2 + 1];
+      const ux = Math.sign(px - ax);
+      const uy = Math.sign(py - ay);
+      const vx = Math.sign(bx - px);
+      const vy = Math.sign(by - py);
+      const sx = px - R * ux;
+      const sy = py - R * uy;
+      const ex = px + R * vx;
+      const ey = py + R * vy;
+      d += `${i === 0 ? "M" : "L"} ${f(sx)} ${f(sy)} `;
+      if (R > 0.01) {
+        // 90-degree arc as a cubic: control points sit on the two edge directions, so the
+        // curve bulges toward the corner (fillet) or away from it (rounded corner) on its own.
+        d += `C ${f(sx + k * R * ux)} ${f(sy + k * R * uy)} ${f(ex - k * R * vx)} ${f(ey - k * R * vy)} ${f(ex)} ${f(ey)} `;
+      }
+    }
+    d += "Z ";
+  }
+  return d.trim();
+}
+
 // --- shape building ---
-function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: number } {
+function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: number; count: number } {
   const shapes: Shape[] = [];
-  if (!lum) return { shapes, canvasW: 0, canvasH: 0 };
+  let count = 0; // marks the user sees (modular merges them all into one node)
+  if (!lum) return { shapes, canvasW: 0, canvasH: 0, count: 0 };
   const pitch = p.dotSize + p.gap; // square grid — the mark width never affects the canvas
   const dissolveN = p.dissolve / 100;
   const dStart = Math.min(0.98, 1 - p.reach / 100); // where the dissolve gradient begins
@@ -519,65 +623,18 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
   let canvasH: number;
 
   if (p.modular) {
-    // Each ON cell fills its whole cell so neighbours touch and connect. Round only the
-    // corners whose two orthogonal neighbours are both OFF (exposed outer corners).
-    const cornerR = (pitch / 2) * roundN;
-    for (let r = 0; r < gridRows; r++) {
-      for (let c = 0; c < gridCols; c++) {
-        if (!isOn(r, c)) continue;
-        const up = isOn(r - 1, c);
-        const dn = isOn(r + 1, c);
-        const lf = isOn(r, c - 1);
-        const rt = isOn(r, c + 1);
-        // Diagonal neighbours (used both to keep the corner square and to weld across).
-        const dBR = isOn(r + 1, c + 1);
-        const dBL = isOn(r + 1, c - 1);
-        // Round a corner only if it is truly exposed — keep it square when a diagonal
-        // neighbour sits at that corner, so diagonally-touching cells connect.
-        const tl = !up && !lf && !isOn(r - 1, c - 1) ? cornerR : 0;
-        const tr = !up && !rt && !isOn(r - 1, c + 1) ? cornerR : 0;
-        const br = !dn && !rt && !dBR ? cornerR : 0;
-        const bl = !dn && !lf && !dBL ? cornerR : 0;
-        shapes.push({ kind: "pill", x: c * pitch, y: r * pitch, w: pitch, h: pitch, radius: 0, cr: [tl, tr, br, bl] });
-
-        // Weld diagonally-connected cells with a capsule ALONG the diagonal (not a square
-        // blob): thickness grows with the corner radius, so higher "Cantos" merges them
-        // more. Added once per junction, from the top cell of each diagonal pair.
-        const neck = pitch * roundN * 0.55; // neck thickness
-        if (neck > 0.5) {
-          const len = pitch * 0.95; // reaches into both diagonal cells
-          if (!dn && !rt && dBR) {
-            const px = (c + 1) * pitch;
-            const py = (r + 1) * pitch;
-            shapes.push({ kind: "pill", x: px - len / 2, y: py - neck / 2, w: len, h: neck, radius: neck / 2, rot: Math.PI / 4 });
-          }
-          if (!dn && !lf && dBL) {
-            const px = c * pitch;
-            const py = (r + 1) * pitch;
-            shapes.push({ kind: "pill", x: px - len / 2, y: py - neck / 2, w: len, h: neck, radius: neck / 2, rot: -Math.PI / 4 });
-          }
-        }
-      }
-    }
-
-    // Concave fillets: round the inner (concave) corners so connections are rounded too.
-    // A concave corner sits at a grid point where exactly 3 of the 4 surrounding cells are
-    // ON — the fillet curves into the single OFF cell's corner.
-    if (cornerR > 0.5) {
-      for (let pr = 1; pr < gridRows; pr++) {
-        for (let pc = 1; pc < gridCols; pc++) {
-          const otl = isOn(pr - 1, pc - 1);
-          const otr = isOn(pr - 1, pc);
-          const obl = isOn(pr, pc - 1);
-          const obr = isOn(pr, pc);
-          if ((otl ? 1 : 0) + (otr ? 1 : 0) + (obl ? 1 : 0) + (obr ? 1 : 0) !== 3) continue;
-          const q: "br" | "bl" | "tr" | "tl" = !obr ? "br" : !obl ? "bl" : !otr ? "tr" : "tl";
-          shapes.push({ kind: "pill", x: pc * pitch, y: pr * pitch, w: cornerR, h: cornerR, radius: cornerR, fillet: q });
-        }
-      }
-    }
-    canvasW = Math.max(1, gridCols * pitch);
-    canvasH = Math.max(1, gridRows * pitch);
+    // Modular = one merged blob. Instead of stacking a rect per cell (which leaves hard,
+    // squared-off junctions), trace the outline of the whole ON region and round EVERY
+    // corner of that outline with the same radius: convex corners get cut, concave ones
+    // (the junctions between cells) get filleted. So "Cantos" rounds the connections too.
+    const cap = Math.min(1, MAX_OUTPUT / Math.max(gridCols * pitch, gridRows * pitch));
+    const step = pitch * cap;
+    const cornerR = (step / 2) * roundN;
+    canvasW = Math.max(1, gridCols * step);
+    canvasH = Math.max(1, gridRows * step);
+    for (let r = 0; r < gridRows; r++) for (let c = 0; c < gridCols; c++) if (isOn(r, c)) count++;
+    const d = modularOutline(isOn, step, cornerR);
+    if (d) shapes.push({ kind: "path", x: 0, y: 0, w: canvasW, h: canvasH, radius: cornerR, d });
   } else {
     // Pass 1: collect runs and find the longest, so the "Largura" trim can be scaled to it.
     const runs: { r: number; c: number; len: number }[] = [];
@@ -617,6 +674,7 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
     }
     canvasW = Math.max(1, gridCols * pitch - p.gap);
     canvasH = Math.max(1, gridRows * pitch - p.gap);
+    count = shapes.length;
   }
 
   // Cap the output so the longest side never exceeds MAX_OUTPUT px: scale every
@@ -629,12 +687,11 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
       sh.w *= s;
       sh.h *= s;
       sh.radius *= s;
-      if (sh.cr) sh.cr = [sh.cr[0] * s, sh.cr[1] * s, sh.cr[2] * s, sh.cr[3] * s];
     }
     canvasW *= s;
     canvasH *= s;
   }
-  return { shapes, canvasW, canvasH };
+  return { shapes, canvasW, canvasH, count };
 }
 
 function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
@@ -654,68 +711,29 @@ function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
   const offY = (cssH - canvasH * scale) / 2 + panY;
   pctx.fillStyle = "#fff";
   for (const s of shapes) {
-    if (s.fillet) {
-      const px = offX + s.x * scale;
-      const py = offY + s.y * scale;
-      const R = s.radius * scale;
-      pctx.beginPath();
-      pctx.moveTo(px, py);
-      if (s.fillet === "br") {
-        pctx.lineTo(px, py + R);
-        pctx.arc(px + R, py + R, R, Math.PI, 1.5 * Math.PI, false);
-      } else if (s.fillet === "bl") {
-        pctx.lineTo(px - R, py);
-        pctx.arc(px - R, py + R, R, -Math.PI / 2, 0, false);
-      } else if (s.fillet === "tr") {
-        pctx.lineTo(px + R, py);
-        pctx.arc(px + R, py - R, R, Math.PI / 2, Math.PI, false);
-      } else {
-        pctx.lineTo(px - R, py);
-        pctx.arc(px - R, py - R, R, Math.PI / 2, 0, true);
-      }
-      pctx.lineTo(px, py);
-      pctx.closePath();
-      pctx.fill();
+    // Modular: a single merged outline, drawn as one path in canvas space.
+    if (s.kind === "path" && s.d) {
+      pctx.save();
+      pctx.translate(offX, offY);
+      pctx.scale(scale, scale);
+      pctx.fill(new Path2D(s.d), "nonzero");
+      pctx.restore();
       continue;
     }
     const w = s.w * scale;
     const h = s.h * scale;
     const maxR = Math.min(w, h) / 2;
-    let x = offX + s.x * scale;
-    let y = offY + s.y * scale;
-    const rotated = !!s.rot;
-    if (rotated) {
-      // draw around the rect's center, rotated
-      const cx = offX + (s.x + s.w / 2) * scale;
-      const cy = offY + (s.y + s.h / 2) * scale;
-      pctx.save();
-      pctx.translate(cx, cy);
-      pctx.rotate(s.rot!);
-      x = -w / 2;
-      y = -h / 2;
-    }
+    const x = offX + s.x * scale;
+    const y = offY + s.y * scale;
     pctx.beginPath();
-    if (s.cr) {
-      const tl = Math.min(s.cr[0] * scale, maxR);
-      const tr = Math.min(s.cr[1] * scale, maxR);
-      const br = Math.min(s.cr[2] * scale, maxR);
-      const bl = Math.min(s.cr[3] * scale, maxR);
-      pctx.moveTo(x + tl, y);
-      pctx.arcTo(x + w, y, x + w, y + h, tr);
-      pctx.arcTo(x + w, y + h, x, y + h, br);
-      pctx.arcTo(x, y + h, x, y, bl);
-      pctx.arcTo(x, y, x + w, y, tl);
-    } else {
-      const rad = Math.min(maxR, s.radius * scale);
-      pctx.moveTo(x + rad, y);
-      pctx.arcTo(x + w, y, x + w, y + h, rad);
-      pctx.arcTo(x + w, y + h, x, y + h, rad);
-      pctx.arcTo(x, y + h, x, y, rad);
-      pctx.arcTo(x, y, x + w, y, rad);
-    }
+    const rad = Math.min(maxR, s.radius * scale);
+    pctx.moveTo(x + rad, y);
+    pctx.arcTo(x + w, y, x + w, y + h, rad);
+    pctx.arcTo(x + w, y + h, x, y + h, rad);
+    pctx.arcTo(x, y + h, x, y, rad);
+    pctx.arcTo(x, y, x + w, y, rad);
     pctx.closePath();
     pctx.fill();
-    if (rotated) pctx.restore();
   }
 }
 
@@ -728,16 +746,16 @@ function recompute(forceRegrid: boolean) {
   if (mode === "image" && bitmap && (forceRegrid || gridCols !== p.cols)) sampleGrid(p.cols);
   if (mode === "random" && (forceRegrid || gridCols !== p.cols)) regenRandom(p.cols);
 
-  const { shapes, canvasW, canvasH } = buildShapes(p);
+  const { shapes, canvasW, canvasH, count } = buildShapes(p);
   lastShapes = shapes;
   lastCanvas = { w: canvasW, h: canvasH };
   renderPreview(shapes, canvasW, canvasH);
 
-  const n = shapes.length;
+  const n = count;
   estimateEl.textContent = `${n.toLocaleString()} ${t("shapes")} • ${t("output")} ${Math.round(canvasW)}×${Math.round(canvasH)} px`;
   estimateEl.classList.toggle("warn", n > WARN_COUNT);
   if (n > WARN_COUNT) estimateEl.textContent += t("tooMany");
-  genBtn.disabled = n === 0;
+  genBtn.disabled = shapes.length === 0;
 }
 
 let raf = 0;
