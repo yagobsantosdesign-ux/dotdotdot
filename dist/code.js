@@ -48,6 +48,60 @@
     let done = 0;
     for (let i = 0; i < shapes.length; i++) {
       const s = shapes[i];
+      if (s.fillet) {
+        const v = figma.createVector();
+        const R = s.radius;
+        const N = 10;
+        let cxr = 0;
+        let cyr = 0;
+        let a0 = 0;
+        let a1 = 0;
+        let leg = { x: 0, y: 0 };
+        if (s.fillet === "br") {
+          cxr = R;
+          cyr = R;
+          a0 = Math.PI;
+          a1 = 1.5 * Math.PI;
+          leg = { x: 0, y: R };
+        } else if (s.fillet === "bl") {
+          cxr = -R;
+          cyr = R;
+          a0 = -Math.PI / 2;
+          a1 = 0;
+          leg = { x: -R, y: 0 };
+        } else if (s.fillet === "tr") {
+          cxr = R;
+          cyr = -R;
+          a0 = Math.PI / 2;
+          a1 = Math.PI;
+          leg = { x: R, y: 0 };
+        } else {
+          cxr = -R;
+          cyr = -R;
+          a0 = Math.PI / 2;
+          a1 = 0;
+          leg = { x: -R, y: 0 };
+        }
+        let d = `M 0 0 L ${leg.x} ${leg.y}`;
+        for (let k = 0; k <= N; k++) {
+          const a = a0 + (a1 - a0) * k / N;
+          d += ` L ${(cxr + R * Math.cos(a)).toFixed(2)} ${(cyr + R * Math.sin(a)).toFixed(2)}`;
+        }
+        d += " Z";
+        v.vectorPaths = [{ windingRule: "NONZERO", data: d }];
+        v.relativeTransform = [
+          [1, 0, s.x],
+          [0, 1, s.y]
+        ];
+        v.fills = [{ type: "SOLID", color: WHITE }];
+        nodes.push(v);
+        done++;
+        if (done % BATCH === 0) {
+          post({ type: "progress", done, total: shapes.length });
+          await new Promise((res) => setTimeout(res, 0));
+        }
+        continue;
+      }
       const r = figma.createRectangle();
       const w = Math.max(0.01, s.w);
       const h = Math.max(0.01, s.h);

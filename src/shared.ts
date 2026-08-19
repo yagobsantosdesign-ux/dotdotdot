@@ -9,6 +9,7 @@ export type Shape = {
   radius: number; // uniform corner radius in px (0 = square, min(w,h)/2 = fully round)
   cr?: [number, number, number, number]; // modular mode: per-corner radii [tl, tr, br, bl]
   rot?: number; // rotation in radians, around the shape's center (modular diagonal welds)
+  fillet?: "br" | "bl" | "tr" | "tl"; // modular: concave corner fill at (x,y), quadrant = OFF cell
 };
 
 // UI -> main

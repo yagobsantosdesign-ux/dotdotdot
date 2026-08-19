@@ -559,6 +559,23 @@ function buildShapes(p: Params): { shapes: Shape[]; canvasW: number; canvasH: nu
         }
       }
     }
+
+    // Concave fillets: round the inner (concave) corners so connections are rounded too.
+    // A concave corner sits at a grid point where exactly 3 of the 4 surrounding cells are
+    // ON — the fillet curves into the single OFF cell's corner.
+    if (cornerR > 0.5) {
+      for (let pr = 1; pr < gridRows; pr++) {
+        for (let pc = 1; pc < gridCols; pc++) {
+          const otl = isOn(pr - 1, pc - 1);
+          const otr = isOn(pr - 1, pc);
+          const obl = isOn(pr, pc - 1);
+          const obr = isOn(pr, pc);
+          if ((otl ? 1 : 0) + (otr ? 1 : 0) + (obl ? 1 : 0) + (obr ? 1 : 0) !== 3) continue;
+          const q: "br" | "bl" | "tr" | "tl" = !obr ? "br" : !obl ? "bl" : !otr ? "tr" : "tl";
+          shapes.push({ kind: "pill", x: pc * pitch, y: pr * pitch, w: cornerR, h: cornerR, radius: cornerR, fillet: q });
+        }
+      }
+    }
     canvasW = Math.max(1, gridCols * pitch);
     canvasH = Math.max(1, gridRows * pitch);
   } else {
@@ -637,6 +654,30 @@ function renderPreview(shapes: Shape[], canvasW: number, canvasH: number) {
   const offY = (cssH - canvasH * scale) / 2 + panY;
   pctx.fillStyle = "#fff";
   for (const s of shapes) {
+    if (s.fillet) {
+      const px = offX + s.x * scale;
+      const py = offY + s.y * scale;
+      const R = s.radius * scale;
+      pctx.beginPath();
+      pctx.moveTo(px, py);
+      if (s.fillet === "br") {
+        pctx.lineTo(px, py + R);
+        pctx.arc(px + R, py + R, R, Math.PI, 1.5 * Math.PI, false);
+      } else if (s.fillet === "bl") {
+        pctx.lineTo(px - R, py);
+        pctx.arc(px - R, py + R, R, -Math.PI / 2, 0, false);
+      } else if (s.fillet === "tr") {
+        pctx.lineTo(px + R, py);
+        pctx.arc(px + R, py - R, R, Math.PI / 2, Math.PI, false);
+      } else {
+        pctx.lineTo(px - R, py);
+        pctx.arc(px - R, py - R, R, Math.PI / 2, 0, true);
+      }
+      pctx.lineTo(px, py);
+      pctx.closePath();
+      pctx.fill();
+      continue;
+    }
     const w = s.w * scale;
     const h = s.h * scale;
     const maxR = Math.min(w, h) / 2;
